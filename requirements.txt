@@ -1,0 +1,4 @@
+# OpenCV must include the aruco module (the contrib distribution does).
+numpy>=1.21,<2
+opencv-contrib-python>=4.5,<4.12
+pytest>=6

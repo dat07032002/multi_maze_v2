@@ -1,0 +1,15 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and editor state
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Camera captures are generated, large, and remain local by default.
+artifacts/

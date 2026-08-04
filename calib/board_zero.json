@@ -1,0 +1,22 @@
+{
+  "zero_rotation": [
+    [
+      0.9989424669309159,
+      -0.015075359153486678,
+      -0.043435944888656874
+    ],
+    [
+      -0.014064832598963573,
+      -0.9996254309275457,
+      0.023477187371588437
+    ],
+    [
+      -0.04377360215860937,
+      -0.02284144017593709,
+      -0.9987803263805053
+    ]
+  ],
+  "calibration": "/home/dat/Desktop/tag_vision/calib/camera_calib.json",
+  "geometry": "/home/dat/Desktop/tag_vision/calib/board_tags.json",
+  "note": "Plate rotation treated as level. Only valid while the camera does not move; re-zero after any disturbance."
+}

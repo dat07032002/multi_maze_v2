@@ -1,0 +1,45 @@
+{
+  "_comment": "NOMINAL values. Replace x_m/y_m/size_m with caliper measurements of each tag's square OUTER BLACK footprint in the plate frame (origin lower-left, +x right, +y up). rotation_deg is counter-clockwise in that frame. Set z_m if a tag sits on a riser. Wrong values here corrupt the pose invisibly.",
+  "measured": false,
+  "board_width_m": 0.259,
+  "board_height_m": 0.229,
+  "family": "tag36h11",
+  "tags": [
+    {
+      "id": 0,
+      "x_m": 0.006,
+      "y_m": 0.205,
+      "size_m": 0.018,
+      "z_m": 0.0,
+      "rotation_deg": 0.0,
+      "label": "top-left"
+    },
+    {
+      "id": 1,
+      "x_m": 0.235,
+      "y_m": 0.006,
+      "size_m": 0.018,
+      "z_m": 0.0,
+      "rotation_deg": -90.0,
+      "label": "bottom-right"
+    },
+    {
+      "id": 2,
+      "x_m": 0.235,
+      "y_m": 0.205,
+      "size_m": 0.018,
+      "z_m": 0.0,
+      "rotation_deg": 0.0,
+      "label": "top-right"
+    },
+    {
+      "id": 3,
+      "x_m": 0.006,
+      "y_m": 0.006,
+      "size_m": 0.018,
+      "z_m": 0.0,
+      "rotation_deg": 180.0,
+      "label": "bottom-left"
+    }
+  ]
+}
