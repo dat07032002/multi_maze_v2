@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "maze_id": "maze_final",
+  "source_layout": "/home/dat/Desktop/tag_vision/maze_design/maze_final.json",
+  "single_source_of_truth": "layout.json",
+  "print_config": {
+    "floor_thickness_m": 0.003,
+    "floor_strip_height_m": 0.0015,
+    "minimum_feature_m": 0.0012,
+    "mounting_interface_confirmed": false,
+    "include_outer_rim": false,
+    "outer_rim_thickness_m": 0.003
+  },
+  "print_validation": {
+    "passed": true,
+    "errors": [],
+    "playable_dimensions_m": [
+      0.259,
+      0.229
+    ],
+    "floor_thickness_m": 0.003,
+    "wall_thickness_m": 0.003,
+    "wall_height_m": 0.008,
+    "route_minimum_clearance_m": 0.001500012139656214,
+    "route_required_clearance_m": 0.0015,
+    "mounting_interface_confirmed": false,
+    "print_status": "prototype_only"
+  },
+  "final_fit_requested": false,
+  "files": {
+    "layout.json": {
+      "sha256": "91245f853f27964acc10b9716c4e529cf85aeabf5689c360407fc52ac926e3a4",
+      "bytes": 18796
+    },
+    "route.json": {
+      "sha256": "b4a23fa88dbd626b0312f9d13b38d02662eca071cd79b3dcf889b06c48e90296",
+      "bytes": 8110
+    },
+    "model.xml": {
+      "sha256": "3171043c5e36aff66105b1a5d782467c37a15617d82c12db6356386d3215c6ca",
+      "bytes": 69525
+    },
+    "preview.png": {
+      "sha256": "85c2f2b1fe29efd3101f1bbd29ade7f992891bea69f04862e48be800228ae2f7",
+      "bytes": 9438
+    },
+    "maze_prototype.stl": {
+      "sha256": "91e14ba45096aa48d6711d9a0be2bfe2534dbc4bcf0592e41078e6af40720d5c",
+      "bytes": 901160
+    }
+  }
+}

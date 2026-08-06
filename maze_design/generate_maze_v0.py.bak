@@ -1,0 +1,237 @@
+"""Design a printable TAG maze: one valid route, wrong turns punished by holes.
+
+Physical sizes drive the mechanics:
+
+  ball 12 mm, hole 15 mm, corridor 20 mm clear
+    A hole centred in a normal corridor leaves 2.5 mm each side -> the corridor
+    is BLOCKED. That is how a wrong turn is closed off.
+    A widened section is two corridors merged (43 mm). A hole pushed to one
+    side leaves 2.5 mm there and 25.5 mm on the other -> the ball must steer
+    around it. That is a DODGE.
+
+Layout decisions:
+  - The four corner cells are reserved as tag pockets and walled off, so the
+    tags cannot be occluded by the ball and do not fight the maze for space.
+  - The route is the tree diameter (longest path) of a perfect maze, which
+    makes it wind across the whole board instead of cutting a corner.
+  - Blocking holes go in decoy cells DIRECTLY OFF the route, so every hole
+    guards a decision the ball could actually get wrong. Scattering holes in
+    unreachable dead ends looks busy and changes nothing.
+"""
+from __future__ import annotations
+
+import json
+import math
+import random
+from collections import deque
+
+BOARD_W, BOARD_H = 0.259, 0.229
+WALL_T = 0.003
+WALL_H = 0.012
+BALL_R = 0.006
+HOLE_R = 0.0075
+
+COLS, ROWS = 11, 9
+PITCH = 0.023                       # 20 mm corridor + 3 mm wall
+X0 = (BOARD_W - COLS * PITCH) / 2.0
+Y0 = (BOARD_H - ROWS * PITCH) / 2.0
+
+TAG_CELLS = {(0, 0), (COLS - 1, 0), (0, ROWS - 1), (COLS - 1, ROWS - 1)}
+SEED = 7
+
+
+def centre(cell):
+    i, j = cell
+    return (X0 + (i + 0.5) * PITCH, Y0 + (j + 0.5) * PITCH)
+
+
+def neighbours(cell):
+    i, j = cell
+    for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        n = (i + di, j + dj)
+        if 0 <= n[0] < COLS and 0 <= n[1] < ROWS and n not in TAG_CELLS:
+            yield n
+
+
+def carve(rng):
+    cells = [c for c in ((i, j) for i in range(COLS) for j in range(ROWS))
+             if c not in TAG_CELLS]
+    start = cells[0]
+    passages, seen, stack = set(), {start}, [start]
+    while stack:
+        cell = stack[-1]
+        options = [n for n in neighbours(cell) if n not in seen]
+        if not options:
+            stack.pop()
+            continue
+        nxt = rng.choice(options)
+        passages.add(frozenset((cell, nxt)))
+        seen.add(nxt)
+        stack.append(nxt)
+    return passages
+
+
+def bfs(passages, start):
+    prev, order = {start: None}, [start]
+    queue = deque([start])
+    while queue:
+        cell = queue.popleft()
+        for n in neighbours(cell):
+            if n not in prev and frozenset((cell, n)) in passages:
+                prev[n] = cell
+                order.append(n)
+                queue.append(n)
+    return prev, order
+
+
+def path_between(passages, start, goal):
+    prev, _ = bfs(passages, start)
+    path, cell = [], goal
+    while cell is not None:
+        path.append(cell)
+        cell = prev[cell]
+    return path[::-1]
+
+
+def longest_path(passages):
+    """Tree diameter: the longest route the maze contains."""
+    origin = next(iter(
+        c for c in ((i, j) for i in range(COLS) for j in range(ROWS))
+        if c not in TAG_CELLS))
+    _, order = bfs(passages, origin)
+    far_a = order[-1]
+    _, order = bfs(passages, far_a)
+    far_b = order[-1]
+    return path_between(passages, far_a, far_b)
+
+
+def build():
+    rng = random.Random(SEED)
+    passages = carve(rng)
+    route = longest_path(passages)
+    route_set = set(route)
+
+    holes = []          # (x, y, role)
+    used_cells = set()
+
+    # --- decoy openings: give the route real wrong turns to punish ---------
+    # Add a passage from a route cell into an adjacent off-route cell, then
+    # block that cell with a hole. Every hole now guards a live decision.
+    rng.shuffle_route = None
+    interior = route[2:-2]
+    for cell in interior:
+        if len(holes) >= 12:
+            break
+        if any(abs(cell[0] - u[0]) + abs(cell[1] - u[1]) < 2 for u in used_cells):
+            continue
+        options = [n for n in neighbours(cell)
+                   if n not in route_set and n not in used_cells]
+        rng.shuffle(options)
+        for decoy in options:
+            pair = frozenset((cell, decoy))
+            passages.add(pair)                 # open the wrong turn
+            cx, cy = centre(cell)
+            dx, dy = centre(decoy)
+            # Hole in the throat of the decoy, just past the opening.
+            holes.append((cx + 0.95 * (dx - cx), cy + 0.95 * (dy - cy), "block"))
+            used_cells.add(cell)
+            used_cells.add(decoy)
+            break
+
+    # --- dodge holes: widen a route cell sideways, offset a hole ----------
+    dodges = 0
+    for cell in interior:
+        if dodges >= 3:
+            break
+        if any(abs(cell[0] - u[0]) + abs(cell[1] - u[1]) < 2 for u in used_cells):
+            continue
+        options = [n for n in neighbours(cell)
+                   if n not in route_set and n not in used_cells]
+        if not options:
+            continue
+        wide = options[0]
+        passages.add(frozenset((cell, wide)))
+        cx, cy = centre(cell)
+        wx, wy = centre(wide)
+        # Centre the hole in the MERGED 43 mm corridor: 14 mm clear each side
+        # against a 12 mm ball. The ball must leave the centreline and commit
+        # to a side. Offsetting further looks more demanding but is a wall:
+        # at 6 mm the route side drops to 8.5 mm and the detour needs more
+        # along-route room than one widened cell provides.
+        holes.append((cx + 0.50 * (wx - cx), cy + 0.50 * (wy - cy), "dodge"))
+        used_cells.add(cell)
+        used_cells.add(wide)
+        dodges += 1
+
+    # --- walls -------------------------------------------------------------
+    walls_h, walls_v = [], []
+    for i in range(COLS):
+        for j in range(ROWS):
+            cell = (i, j)
+            x_lo, y_lo = X0 + i * PITCH, Y0 + j * PITCH
+            x_hi, y_hi = x_lo + PITCH, y_lo + PITCH
+            right = (i + 1, j)
+            above = (i, j + 1)
+            closed_right = (
+                i == COLS - 1 or cell in TAG_CELLS or right in TAG_CELLS
+                or frozenset((cell, right)) not in passages)
+            closed_above = (
+                j == ROWS - 1 or cell in TAG_CELLS or above in TAG_CELLS
+                or frozenset((cell, above)) not in passages)
+            if closed_right:
+                walls_v.append([y_lo, y_hi, x_hi])
+            if closed_above:
+                walls_h.append([x_lo, x_hi, y_hi])
+            if i == 0:
+                walls_v.append([y_lo, y_hi, x_lo])
+            if j == 0:
+                walls_h.append([x_lo, x_hi, y_lo])
+
+    def merge(segments):
+        out, groups = [], {}
+        for seg in segments:
+            groups.setdefault(round(seg[2], 6), []).append(seg)
+        for key, group in groups.items():
+            group.sort()
+            current = list(group[0])
+            for seg in group[1:]:
+                if abs(seg[0] - current[1]) < 1e-9:
+                    current[1] = seg[1]
+                else:
+                    out.append(current)
+                    current = list(seg)
+            out.append(current)
+        return out
+
+    waypoints = [list(centre(c)) for c in route]
+    layout = {
+        "board_width": BOARD_W, "board_height": BOARD_H,
+        "ball_radius": BALL_R, "wall_thickness": WALL_T,
+        "wall_height": WALL_H,
+        "walls_h": merge(walls_h), "walls_v": merge(walls_v),
+        "walls_angled": [],
+        "holes": [[h[0], h[1]] for h in holes],
+        "hole_radii": [HOLE_R] * len(holes),
+        "waypoints": waypoints,
+        "start_planned": waypoints[0], "goal_planned": waypoints[-1],
+    }
+    roles = {str(k): h[2] for k, h in enumerate(holes)}
+    return layout, roles, route
+
+
+if __name__ == "__main__":
+    layout, roles, route = build()
+    SP = ("/tmp/claude-1000/-home-dat-Desktop-TAG/"
+          "3804ddbe-4868-4b96-84f8-0ef325dcab84/scratchpad/")
+    json.dump(layout, open(SP + "maze_design.json", "w"), indent=1)
+    json.dump(roles, open(SP + "hole_roles.json", "w"), indent=1)
+
+    length = sum(math.dist(layout["waypoints"][k], layout["waypoints"][k + 1])
+                 for k in range(len(route) - 1))
+    blocking = sum(1 for v in roles.values() if v == "block")
+    print(f"grid {COLS}x{ROWS} at {PITCH*1000:.0f} mm "
+          f"({(PITCH-WALL_T)*1000:.0f} mm corridors), 4 corner cells reserved for tags")
+    print(f"route {len(route)} cells, {length*1000:.0f} mm")
+    print(f"holes {len(layout['holes'])}: {blocking} blocking wrong turns, "
+          f"{len(roles)-blocking} to dodge")
+    print(f"walls {len(layout['walls_h'])}H {len(layout['walls_v'])}V")

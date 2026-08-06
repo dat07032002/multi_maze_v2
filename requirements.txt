@@ -2,3 +2,6 @@
 numpy>=1.21,<2
 opencv-contrib-python>=4.5,<4.12
 pytest>=6
+
+# FEETECH STS3215 bus servos speak a serial protocol; no vendor SDK is used.
+pyserial>=3.5

@@ -1,6 +1,13 @@
 # Vision project status
 
-Last updated: 2026-08-04
+Last updated: 2026-08-06
+
+> **Scope note.** This document covers the vision work only, and parts of it
+> predate the 2026-08-06 rescale to a 256 x 226 mm board. Numbers measured on
+> the 259 x 229 mm board (reprojection, angle noise, detection rates) were not
+> re-taken and should be treated as indicative. For maze design see
+> [`../maze_design/README.md`](../maze_design/README.md); for the servo stack
+> see the repository README.
 
 ## Scope
 
@@ -28,7 +35,7 @@ The moving board frame is:
 - `+X` right toward tag 1;
 - `+Y` up toward tag 0;
 - `+Z` out of the board surface;
-- width 259 mm and height 229 mm.
+- width 256 mm and height 226 mm.
 
 The marble output is the centre `(x,y)` in this frame. Ray/plane intersection
 uses `z = 5.5 mm` because the marble radius is 5.5 mm.
@@ -60,7 +67,8 @@ not an absolute gravity reference.
 
 ### Board geometry and pose
 
-- Defined the 259 x 229 mm board frame and per-tag 3-D corners.
+- Defined the board frame and per-tag 3-D corners (259 x 229 mm at the
+  time; rescaled to 256 x 226 mm on 2026-08-06).
 - Added per-tag in-plane rotation so the installed tag orientations map to the
   correct ArUco corner order.
 - Recorded installed layout:

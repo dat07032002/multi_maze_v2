@@ -1,0 +1,68 @@
+[
+ {
+  "index": 1,
+  "seed": 1917,
+  "route_mm": 781.7794576080526,
+  "clearance_mm": 1.664264562337335,
+  "holes": 12,
+  "blocking": 9,
+  "dodge": 3,
+  "cells": 45,
+  "middle": 13
+ },
+ {
+  "index": 2,
+  "seed": 1752,
+  "route_mm": 279.28473850360575,
+  "clearance_mm": 1.8277230461058775,
+  "holes": 9,
+  "blocking": 6,
+  "dodge": 3,
+  "cells": 39,
+  "middle": 12
+ },
+ {
+  "index": 3,
+  "seed": 513,
+  "route_mm": 846.9052417496373,
+  "clearance_mm": 1.5809462804508532,
+  "holes": 11,
+  "blocking": 8,
+  "dodge": 3,
+  "cells": 41,
+  "middle": 12
+ },
+ {
+  "index": 4,
+  "seed": 939,
+  "route_mm": 532.2985726489887,
+  "clearance_mm": 1.5918070403890243,
+  "holes": 11,
+  "blocking": 8,
+  "dodge": 3,
+  "cells": 37,
+  "middle": 11
+ },
+ {
+  "index": 5,
+  "seed": 672,
+  "route_mm": 804.6867801697226,
+  "clearance_mm": 1.5442195888059027,
+  "holes": 12,
+  "blocking": 9,
+  "dodge": 3,
+  "cells": 41,
+  "middle": 11
+ },
+ {
+  "index": 6,
+  "seed": 2137,
+  "route_mm": 662.2471868027743,
+  "clearance_mm": 1.5521956700896358,
+  "holes": 11,
+  "blocking": 8,
+  "dodge": 3,
+  "cells": 45,
+  "middle": 9
+ }
+]

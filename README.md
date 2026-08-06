@@ -1,10 +1,17 @@
-# Multi Maze V2: board and marble vision
+# Multi Maze V2: board vision, maze design, and tilt servos
 
-This repository currently contains the vision foundation for a manually tilted
-259 x 229 mm maze board. A calibrated overhead camera and four unique AprilTags
-estimate the board's two tilt angles; a hybrid blue-colour/circle detector
-locates a 5.5 mm-radius marble in metric board coordinates. Maze geometry and
-the navigation policy are intentionally deferred until perception is reliable.
+A ball-maze robot built from scratch, standalone Python, no ROS.
+
+Three parts exist today:
+
+- **Vision** -- a calibrated overhead camera and four AprilTags give the board's
+  two tilt angles; a hybrid blue-colour/circle detector locates a 5.5 mm-radius
+  marble in metric board coordinates.
+- **Maze design** -- generators, a rescaler, an STL exporter, and validators for
+  the printed 256 x 226 mm insert. See [`maze_design/README.md`](maze_design/README.md).
+- **Servos** -- a from-scratch FEETECH STS3215 bus driver and command tools.
+
+Not yet built: the simulator, the control loop, and the policy.
 
 The main live application is standalone OpenCV and does **not** require ROS:
 
@@ -39,16 +46,22 @@ point where it touches the board.
 | Capture | 1920 x 1200 MJPG, resized uniformly to 1280 x 800 |
 | Calibration model | Kannala-Brandt fisheye |
 | Calibration RMS | 0.390 px over 88 views / 5108 points |
-| Board | 259 x 229 mm |
+| Board | 256 x 226 mm |
 | Tags | Four 18 mm `tag36h11` tags, IDs 0–3 |
 | Marble | Blue, 5.5 mm radius |
 | Pose requirement | Four known tags by default |
 | Pose rejection | Reprojection RMS greater than 4 px |
+| Tilt servos | Two FEETECH STS3215, ids 1 and 2, 1 Mbps on `/dev/ttyUSB0` |
+| Servo mode | Position (register 33 = 0), 0-4095 counts over 360 deg |
 
-The checked-in tag coordinates use the default board design in
-[`calib/board_tags.json`](calib/board_tags.json). They are nominal rather than
-caliper-measured. This is enough for the present design and tests, but measured
-tag locations remain the route to better absolute metric/angle accuracy.
+The checked-in tag coordinates in
+[`calib/board_tags.json`](calib/board_tags.json) are **derived from the maze
+layout's tag pads, not caliper-measured** (`"measured": false`). Tags are glued
+to the top of the corner pads, so `z_m = 0.011`: the pad top is 8 mm above the
+playing surface and the tag is 3 mm thick. All four shift equally, so alpha and
+beta are unaffected, but marble coordinates are -- the ray/plane intersection
+depends on that height. Measuring the installed tags remains the route to
+absolute accuracy.
 
 The saved zero in [`calib/board_zero.json`](calib/board_zero.json) is specific
 to the current camera pose. Re-zero after the camera, board mount, or lens has

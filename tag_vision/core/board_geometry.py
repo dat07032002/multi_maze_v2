@@ -6,9 +6,14 @@ happily fits whatever geometry it is given, and reports a small residual while
 being wrong. The only defence is measuring carefully and validating the numbers
 for self-consistency, which is what this module does.
 
-Frame convention, matching policy_contract:
+Frame convention:
   origin at the plate's lower-left corner, +x right, +y up, z = 0 at the plate
-  surface. Board is 259 x 229 mm.
+  surface. Board is 256 x 226 mm. The maze layouts in `maze_design/` use the
+  same frame, so wall, hole, and waypoint coordinates need no conversion.
+
+Note z = 0 is the PLAYING SURFACE, not the bottom of the printed part. The maze
+prints 11 mm tall over a 3 mm floor, so the corner tag pads top out 8 mm above
+this origin and a tag glued there sits at z = 11 mm.
 
 Each tag is stored by the lower-left of its square OUTER BLACK footprint, its
 size, and an optional in-plane rotation about its centre. This keeps x/y tied
@@ -26,8 +31,8 @@ from typing import Dict, Iterable
 
 import numpy as np
 
-BOARD_WIDTH_M = 0.259
-BOARD_HEIGHT_M = 0.229
+BOARD_WIDTH_M = 0.256
+BOARD_HEIGHT_M = 0.226
 
 
 @dataclass(frozen=True)

@@ -13,3 +13,7 @@ venv/
 
 # Camera captures are generated, large, and remain local by default.
 artifacts/
+
+# Maze build output: regenerate with maze_design/export_stl.py and render_*.py.
+# The layout JSON is the source of truth.
+maze_design/__pycache__/
