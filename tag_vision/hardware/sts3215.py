@@ -585,6 +585,27 @@ class STS3215Bus:
         """Release the servo. This is the emergency stop."""
         self.write_byte(servo_id, Register.TORQUE_ENABLE, 0)
 
+    def sync_write_positions(self, targets: dict[int, int]) -> None:
+        """Set several goal positions in one broadcast packet.
+
+        One packet means every servo latches its target in the same instant.
+        Writing them one at a time puts a bus round trip between the two axes,
+        so the board takes a slightly skewed path and the gap lands inside the
+        control period -- small, but it is exactly the sort of error that a
+        policy learns around in simulation and then meets differently on
+        hardware.
+
+        Broadcast writes are not acknowledged, so this cannot report a per-servo
+        failure. Read the positions back if that matters.
+        """
+        if not targets:
+            return
+        params = bytearray([int(Register.GOAL_POSITION), 2])
+        for servo_id, counts in sorted(targets.items()):
+            value = int(min(max(int(counts), 0), COUNTS_PER_REV - 1))
+            params += bytes([servo_id, value & 0xFF, (value >> 8) & 0xFF])
+        self._transact(BROADCAST_ID, Instruction.SYNC_WRITE, bytes(params))
+
     def set_goal_position(self, servo_id: int, counts: int) -> None:
         counts = int(counts)
         if not 0 <= counts < COUNTS_PER_REV:

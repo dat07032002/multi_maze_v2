@@ -232,11 +232,13 @@ tag_vision/core/ball_detection.py
 tag_vision/hardware/sts3215.py FEETECH bus driver
 tag_vision/hardware/motion.py  load-guarded point-to-point moves
 tag_vision/hardware/imu.py     BNO086 frame reader
+tag_vision/control/tilt.py     board angle -> counts, backlash fed forward
 tools/manual_tilt_angle.py     standalone live viewer
 tools/record_ball_dataset.py   standalone data recorder
 tools/imu_monitor.py           IMU bring-up and level-zero capture
 tools/sysid_actuator.py        actuator system identification
 tools/fit_sysid.py             sysid run -> servo calibration
+tools/validate_backlash.py     measures whether compensation actually helps
 tools/*.py                     calibration, tag, servo, and ROS utilities
 test/                          synthetic geometry, pose, detector, IMU, fit tests
 ```

@@ -316,6 +316,53 @@ unreadable before the load-decoding fix.
 the torque case for that is comfortable -- normal operation sits at 3-4% of
 rated, so a faster linkage would reach perhaps 5%.
 
+#### Feedforward tilt control, 2026-08-06
+
+`tag_vision/control/tilt.py` maps a commanded board angle to servo counts with
+the lost motion fed forward. Deliberately not a PID: ~100 ms of the latency is
+electrical and irreducible, capping a stable feedback loop near 0.2-0.3 Hz,
+while the two dominant errors -- the gain and the backlash -- are both
+deterministic and both measured. An integrator would wind up inside the backlash
+band and overshoot when the slack took up.
+
+`STS3215Bus.sync_write_positions` sends both axes in one broadcast packet so
+they latch together, closing the gap noted at the start of this work.
+
+Measured on the rig by `tools/validate_backlash.py`, commanding
+0/+2/0/-2 deg repeatedly:
+
+| | compensation off | compensation on |
+| --- | ---: | ---: |
+| roll mean \|error\| | 0.876° | **0.261°** |
+| pitch mean \|error\| | 0.427° | **0.258°** |
+| spread at 0°, roll | 1.094° | **0.080°** |
+| spread at 0°, pitch | 0.951° | **0.086°** |
+
+##### The reference face matters more than the magnitude
+
+The first implementation treated `center_counts` as the middle of the backlash
+band and applied ±B/2. It is not: `sysid_actuator` conditions every point by
+approaching from below, so the fit describes the **up branch**, the lower edge.
+The correct inverse is asymmetric -- nothing travelling up, minus the full B
+travelling down.
+
+The wrong convention put every command half a backlash high, which showed up as
+a +0.85° "centre bias" that survived compensation being switched on. With the
+reference corrected it fell to +0.28°, and roll's positioning error improved
+3.4×. `AxisBacklash.reference` now carries the convention explicitly, with a
+test pinning all three.
+
+##### Known second-order effects
+
+- **Residual centre bias**, roll +0.28° and pitch −0.19°. This is genuinely the
+  calibration centre, now comparable to the model residual rather than
+  dominating it. A slow trim would remove it; this is the one place a small
+  integral is safe, acting on a constant rather than on reversal dynamics.
+- **Pitch's backlash is position-dependent** -- about 1.5° mid-range against
+  0.4-0.6° near the extremes -- so a flat 1.211° overcorrects there, costing
+  0.53° at −2°. Roll's is much flatter (1.19-1.42) and does not show it. A small
+  table rather than a scalar would fix it.
+
 #### Remaining
 
 1. **Camera cross-check.** The only independent validation of the IMU, and the
