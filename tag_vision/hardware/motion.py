@@ -2,9 +2,14 @@
 
 Every tool that commands motion needs the same two behaviours, and neither is
 optional on this rig: step out gradually rather than jumping, and abort if the
-servo starts straining. Servo 1 was measured reaching load 1044 -- above its own
-1000 limit -- roughly 40 counts below its resting position, so a single
-unguarded jump can drive it hard into a mechanical stop.
+servo stalls.
+
+"Stalls" is doing real work in that sentence. The plate is heavy, so lifting it
+draws about 1080 load against roughly 72 to lower it -- above the servo's own
+1000 limit -- while the encoder advances normally the whole time. An earlier
+version aborted on load alone and so rejected every upward move, which read
+convincingly as a seized mechanism rather than as a guard that was too strict.
+The test is therefore high load *with no progress*, held over several samples.
 
 Backing off to the start before releasing torque matters: cutting torque while
 wedged leaves the servo resting against the stop, whereas retreating first lets
@@ -38,14 +43,30 @@ def ramp_to(
     servo_id: int,
     target: int,
     *,
-    speed: int = 200,
-    accel: int = 20,
+    speed: int | None = None,
+    accel: int | None = None,
     ramp: int = 10,
     settle: float = 0.25,
     max_load: int = 350,
+    stall_counts: int = 2,
+    stall_checks: int = 3,
+    motion_epsilon: float = 0.01,
     on_step=None,
+    motion_probe=None,
 ) -> MoveResult:
-    """Move to ``target`` counts in increments, aborting on excessive load.
+    """Move to ``target`` counts in increments, aborting on a stall.
+
+    A stall is high load *and* no progress, sustained over ``stall_checks``
+    consecutive samples. Load on its own does not abort: on this rig a servo
+    lifting the plate reads around 1080 while travelling perfectly well,
+    against about 72 lowering it, so a load-only test refuses every upward move.
+
+    ``motion_probe`` is an optional callable returning a scalar measurement of
+    the thing you actually care about moving -- board angle in degrees, say.
+    When given, progress is judged from it rather than from the encoder, with
+    ``motion_epsilon`` as the smallest change that counts. Prefer it: the
+    encoder reports where the servo put its own shaft, which on this rig has
+    already differed sharply from where the plate went.
 
     ``on_step`` is called with the intermediate ``ServoState`` after each
     increment, so a caller can display progress without reimplementing the loop.
@@ -53,13 +74,28 @@ def ramp_to(
     start = bus.read_word(servo_id, Register.PRESENT_POSITION)
     target = int(min(max(int(target), 0), COUNTS_PER_REV - 1))
 
-    bus.write_byte(servo_id, Register.ACCELERATION, accel)
-    bus.write_word(servo_id, Register.GOAL_SPEED, speed)
+    # Only write these when explicitly asked. They set the servo's motion
+    # profile, and the measured latency and rise time are properties of them:
+    # rewriting them here on every call meant any caller could invalidate the
+    # calibration silently. The canonical values live in
+    # ``STS3215Bus.CANONICAL_CONFIG`` and are applied once, at startup.
+    if accel is not None:
+        bus.write_byte(servo_id, Register.ACCELERATION, accel)
+    if speed is not None:
+        if speed == 0:
+            raise ValueError(
+                "GOAL_SPEED 0 is not 'maximum' on this firmware: a 160-count "
+                "step under it moved the board 0.031 deg in 1.26 s. Pass a "
+                "positive speed, or None to inherit the configured value.")
+        bus.write_word(servo_id, Register.GOAL_SPEED, speed)
     bus.torque_enable(servo_id)
 
     step = max(1, int(ramp))
     position = start
     peak_load = 0
+    last_actual = start
+    last_observed = None
+    stalled_for = 0
 
     while position != target:
         position += max(-step, min(step, target - position))
@@ -69,7 +105,36 @@ def ramp_to(
         peak_load = max(peak_load, abs(state.load))
         if on_step is not None:
             on_step(state)
-        if abs(state.load) > max_load:
+
+        # High load alone is not a fault. Lifting a heavy plate against gravity
+        # legitimately draws far more than lowering it: measured on this rig,
+        # the same servo reads ~1080 while raising and ~72 while lowering, and
+        # in both cases the encoder is advancing normally. Aborting on load
+        # alone rejected every upward move and looked convincingly like a
+        # seized mechanism.
+        #
+        # A real jam is high load *with no progress*, so both must hold, and for
+        # several consecutive checks -- a single sample can land mid-transient
+        # while the servo is still breaking away.
+        # Progress means the *board* moved, not the shaft, whenever a probe can
+        # tell us. The encoder only reports where the servo put itself, and this
+        # rig has already shown the two coming apart: servo 1 advanced 200
+        # counts through its dead zone while the plate moved 0.08 deg. A guard
+        # watching the encoder alone would call that healthy travel.
+        if motion_probe is not None:
+            observed = motion_probe()
+            progressed = (last_observed is None
+                          or abs(observed - last_observed) >= motion_epsilon)
+            last_observed = observed
+        else:
+            progressed = abs(state.position - last_actual) >= stall_counts
+        last_actual = state.position
+        if abs(state.load) > max_load and not progressed:
+            stalled_for += 1
+        else:
+            stalled_for = 0
+
+        if stalled_for >= stall_checks:
             bus.set_goal_position(servo_id, start)
             time.sleep(0.5)
             bus.torque_disable(servo_id)

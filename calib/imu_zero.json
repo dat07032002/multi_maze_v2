@@ -1,0 +1,29 @@
+{
+  "zero_rotation": [
+    [
+      0.9996226738197334,
+      -0.023763742282259102,
+      -0.013776593854407002
+    ],
+    [
+      0.024321228558169483,
+      0.9988291066589263,
+      0.041819774417761996
+    ],
+    [
+      0.012766668590834291,
+      -0.042139058409907434,
+      0.9990301856948158
+    ]
+  ],
+  "source": "bno086_game_rotation_vector",
+  "port": "/dev/ttyUSB1",
+  "note": "Board rotation treated as level, captured in place while the board was physically level with the IMU mounted on it. Unlike the camera zero this does not depend on the camera, but it does depend on the IMU not having been re-mounted. Re-capture after any disturbance to the plate or the sensor.",
+  "samples_averaged": 1002,
+  "servo_counts_at_zero": {
+    "1": 2300,
+    "2": 2014
+  },
+  "torque_enabled": false,
+  "capture_seconds": 5.0
+}

@@ -120,6 +120,28 @@ class Mode(IntEnum):
 COUNTS_PER_REV = 4096
 DEGREES_PER_COUNT = 360.0 / COUNTS_PER_REV
 
+# The motion settings every measurement on this rig was taken under. Pinned
+# rather than assumed, because the measured latency and rise time are properties
+# of these registers as much as of the servo.
+#
+# ACCELERATION = 50 comes from measurement, not taste. Stepping servo 2 by 160
+# counts gave a board rise time of 270 ms at the old value of 20 and 146 ms at
+# 50, with 150 no better than 50 -- so 20 was costing roughly 120 ms for nothing.
+#
+# GOAL_SPEED was measured as *not* limiting: rise time was flat at 300 ms across
+# 100, 200, 500 and 1000. It is pinned only so the conditions stay reproducible.
+#
+# Do NOT set GOAL_SPEED to 0. On this firmware that is not "maximum speed" -- a
+# 160-count step under it moved the board 0.031 deg in 1.26 s, i.e. barely at
+# all.
+CANONICAL_CONFIG = {
+    Register.ACCELERATION: 50,
+    Register.GOAL_SPEED: 500,
+    Register.P_COEFFICIENT: 32,
+    Register.D_COEFFICIENT: 32,
+    Register.I_COEFFICIENT: 0,
+}
+
 
 class STSError(Exception):
     """Any protocol-level failure: bad framing, bad checksum, or no reply."""
@@ -424,6 +446,88 @@ class STS3215Bus:
                 "Check that torque is disabled and the register is writable."
             )
         return previous
+
+    def apply_config(self, servo_id: int, config: dict | None = None) -> dict:
+        """Write the canonical motion settings and verify they took.
+
+        The measured dynamics are a property of these registers, not of the
+        servo alone, so they have to be pinned rather than assumed. Before this
+        existed ``ramp_to`` rewrote acceleration and goal speed on every call,
+        which meant any caller passing different values silently invalidated the
+        calibration with nothing to notice.
+
+        Returns the previous values so a caller can restore them.
+        """
+        settings = dict(CANONICAL_CONFIG if config is None else config)
+        previous = {}
+        for register, value in settings.items():
+            width = 2 if register in (Register.GOAL_SPEED,
+                                      Register.TORQUE_LIMIT) else 1
+            reader = self.read_byte if width == 1 else self.read_word
+            writer = self.write_byte if width == 1 else self.write_word
+            previous[register] = reader(servo_id, register)
+            writer(servo_id, register, value)
+
+        mismatched = {
+            r: (v, (self.read_byte if r not in (Register.GOAL_SPEED,
+                                                Register.TORQUE_LIMIT)
+                    else self.read_word)(servo_id, r))
+            for r, v in settings.items()
+        }
+        bad = {r: pair for r, pair in mismatched.items() if pair[0] != pair[1]}
+        if bad:
+            raise STSError(
+                f"servo {servo_id}: configuration did not take: "
+                + ", ".join(f"reg {int(r)} wrote {w} read {g}"
+                            for r, (w, g) in bad.items()))
+        return previous
+
+    def check_config(self, servo_id: int, config: dict | None = None) -> dict:
+        """Return {register: (expected, actual)} for anything that has drifted.
+
+        Empty means the servo still matches the conditions the calibration was
+        measured under.
+        """
+        settings = CANONICAL_CONFIG if config is None else config
+        drift = {}
+        for register, expected in settings.items():
+            reader = (self.read_word
+                      if register in (Register.GOAL_SPEED, Register.TORQUE_LIMIT)
+                      else self.read_byte)
+            actual = reader(servo_id, register)
+            if actual != expected:
+                drift[register] = (expected, actual)
+        return drift
+
+    def calibrate_middle(self, servo_id: int) -> int:
+        """Renumber the servo so its current physical position reads 2048.
+
+        This is FEETECH's own middle-position calibration: writing 128 to
+        TORQUE_ENABLE makes the servo compute the POSITION_OFFSET that puts it
+        at mid-scale and commit it to EEPROM. Matches ``CalibrationOfs`` in
+        FEETECH's FTServo_Python rather than being derived here.
+
+        Nothing moves. The shaft, the horn, and the board stay exactly where
+        they are -- only the number the servo reports for that position changes.
+        Use it when the working position has landed near 0 or 4095, where the
+        servo cannot be commanded past the end of its own scale: on this rig
+        board-level put servo 1 at 4093 of 4095, leaving two counts of travel in
+        one direction and no way to ask for more.
+
+        The offset persists across power cycles, and it invalidates any stored
+        calibration that records servo counts. Returns the new offset.
+        """
+        self.write_byte(servo_id, Register.TORQUE_ENABLE, 128)
+        time.sleep(0.05)  # EEPROM commit
+        offset = _to_signed(self.read_word(servo_id, Register.POSITION_OFFSET))
+        position = self.read_word(servo_id, Register.PRESENT_POSITION)
+        if abs(position - 2048) > 16:
+            raise STSError(
+                f"servo {servo_id}: middle calibration did not take -- position "
+                f"reads {position}, expected about 2048. The servo may not "
+                "support this command."
+            )
+        return offset
 
     def set_mode(self, servo_id: int, mode: Mode) -> int:
         """Switch operating mode. Returns the previous mode.

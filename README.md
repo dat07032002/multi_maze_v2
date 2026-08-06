@@ -2,7 +2,7 @@
 
 A ball-maze robot built from scratch, standalone Python, no ROS.
 
-Three parts exist today:
+Four parts exist today:
 
 - **Vision** -- a calibrated overhead camera and four AprilTags give the board's
   two tilt angles; a hybrid blue-colour/circle detector locates a 5.5 mm-radius
@@ -10,6 +10,9 @@ Three parts exist today:
 - **Maze design** -- generators, a rescaler, an STL exporter, and validators for
   the printed 256 x 226 mm insert. See [`maze_design/README.md`](maze_design/README.md).
 - **Servos** -- a from-scratch FEETECH STS3215 bus driver and command tools.
+- **IMU and system identification** -- an ESP32 streams BNO086 tilt at 200 Hz,
+  and `tools/sysid_actuator.py` measures the counts-to-angle mapping the servo
+  contract needs. See [`firmware/esp32_imu/README.md`](firmware/esp32_imu/README.md).
 
 Not yet built: the simulator, the control loop, and the policy.
 
@@ -53,6 +56,11 @@ point where it touches the board.
 | Pose rejection | Reprojection RMS greater than 4 px |
 | Tilt servos | Two FEETECH STS3215, ids 1 and 2, 1 Mbps on `/dev/ttyUSB0` |
 | Servo mode | Position (register 33 = 0), 0-4095 counts over 360 deg |
+| IMU | SparkFun BNO086, I2C on ESP32 GPIO16/17, game rotation vector @ 200 Hz |
+| IMU link | ESP32-D0WD-V3 on CP2102, `/dev/ttyUSB1` at 115200 |
+| Servo calibration | Measured 2026-08-06. Roll 0.00474 deg/count, pitch 0.00437 |
+| Usable tilt | ±1.4° on both axes, centres at counts 2350 / 2018 |
+| Command resolution | 40 counts (~0.19°) practical floor; under 20 is unusable |
 
 The checked-in tag coordinates in
 [`calib/board_tags.json`](calib/board_tags.json) are **derived from the maze
@@ -114,6 +122,22 @@ Generated frames, masks, JSONL measurements, manifests, and summaries are saved
 under `artifacts/ball_capture/<timestamp>/`. This directory is ignored by Git
 because raw captures are large.
 
+Bring up the IMU and capture the level reference (do this before any servo
+moves, and before anything disturbs the plate):
+
+```bash
+python3 tools/imu_monitor.py --seconds 20        # noise and drop check
+python3 tools/imu_monitor.py --capture-zero --check-torque-shift
+```
+
+Measure the servos against the IMU, then fit the contract:
+
+```bash
+python3 tools/sysid_actuator.py --dry-run        # preflight, commands no motion
+python3 tools/sysid_actuator.py
+python3 tools/fit_sysid.py artifacts/sysid/<stamp>/sysid.json
+```
+
 Run all synthetic tests:
 
 ```bash
@@ -153,19 +177,65 @@ Detection remains on the calibrated raw frame. The viewer image and every
 overlay are mapped into the same undistorted pixel space, so visualization does
 not alter the measurement path.
 
+### Board angle from the IMU
+
+A second, independent path to the same two angles, used as ground truth for
+system identification because it samples far faster than the camera.
+
+1. The ESP32 reads the BNO086's game rotation vector at 200 Hz over I2C.
+2. Quaternions cross the link as Q14 fixed point in a 17-byte CRC-checked frame.
+3. The host converts quaternion to rotation matrix and extracts alpha and beta
+   with the **same** `angles_from_rotation` the camera path uses, so the two are
+   directly comparable rather than two conventions that happen to agree.
+4. Angles are reported relative to a level reference captured in place, using
+   `zero.T @ current` -- the convention `BoardPoseEstimator` already uses.
+
+Dropped frames are counted and surfaced, never interpolated over: a missing
+report during a step response is a hole in the measurement, not a value to
+invent.
+
+### Actuator system identification
+
+`tools/sysid_actuator.py` measures what the servo contract refuses to guess, in
+a deliberate order:
+
+1. **Axis discovery** -- move each servo alone and see which angle responds.
+   Produces the sign, the axis assignment, and the 2x2 cross-coupling matrix.
+   Runs first because nothing else is safe until the signs are known, and
+   because significant coupling would invalidate the contract's independent-axis
+   shape before any effort is spent fitting it.
+2. **Static sweep** -- a load-guarded staircase gives gain, offset, and the
+   linearity residual.
+3. **Hysteresis** -- the same staircase in reverse gives backlash and deadband.
+4. **Step response** -- unramped steps at 200 Hz give latency, rise time, and
+   peak rate, with half the measured link round-trip subtracted so the latency
+   describes the servo rather than the USB cable.
+
+`tools/fit_sysid.py` writes the contract only when the measurement supports the
+linear model it encodes. Failing linearity, plausibility, or coupling checks
+produces `measured=False`, which keeps `angle_to_counts` raising -- a contract
+that claims to be measured and is not would be worse than one that refuses.
+
 ## Repository layout
 
 ```text
 calib/                         camera, board, zero, and printable tag files
-contract/                      vendored simulator/policy coordinate contract
+contract/servo_contract.py     policy action -> board angle -> servo counts
 docs/PROJECT_STATUS.md         work completed, evidence, limits, next steps
+firmware/esp32_imu/            ESP32 sketch streaming BNO086 tilt
 tag_vision/core/board_geometry.py
 tag_vision/core/board_pose.py
 tag_vision/core/ball_detection.py
+tag_vision/hardware/sts3215.py FEETECH bus driver
+tag_vision/hardware/motion.py  load-guarded point-to-point moves
+tag_vision/hardware/imu.py     BNO086 frame reader
 tools/manual_tilt_angle.py     standalone live viewer
 tools/record_ball_dataset.py   standalone data recorder
-tools/*.py                     calibration, tag, and ROS diagnostic utilities
-test/                          synthetic geometry, pose, and detector tests
+tools/imu_monitor.py           IMU bring-up and level-zero capture
+tools/sysid_actuator.py        actuator system identification
+tools/fit_sysid.py             sysid run -> servo calibration
+tools/*.py                     calibration, tag, servo, and ROS utilities
+test/                          synthetic geometry, pose, detector, IMU, fit tests
 ```
 
 ## Known limitations
@@ -185,6 +255,36 @@ test/                          synthetic geometry, pose, and detector tests
   validation milestone.
 - There is no fixed-frame tag. Moving the camera invalidates the saved level
   reference and requires pressing `z` again.
+- **The IMU has never been cross-checked against an independent sensor.** Every
+  board-angle number -- gains, backlash, latency -- comes from it alone. Its
+  internal consistency is good (0.013° drift over 6 minutes, clean axis
+  separation, gains reproducing to 0.3%), but the camera cross-check remains the
+  one validation not yet run.
+- **The servo gain depends on where it is measured**, because the linkage loses
+  authority with travel: pitch read 0.00540 deg/count over ±400 counts and
+  0.00437 over ±320. The calibration is an average over the swept range and must
+  not be extrapolated past it.
+- **Commands under 20 counts do not reliably keep their sign.** 40 counts
+  (~0.19°) is the practical floor, 80 is repeatable to a few percent. Any
+  controller or policy step finer than that is commanding noise.
+- **Backlash is direction-dependent, not random.** Approached consistently the
+  axes repeat to ~0.01°; with mixed directions roll shows 0.73°. Static
+  positioning should condition its approach; dynamic control must model the
+  lost motion instead.
+- The IMU level zero is captured **in place**, relying on the board being
+  physically level with the IMU already mounted. That removes the need to
+  measure a mount offset, but it is perishable: bumping the plate or re-mounting
+  the sensor invalidates it, and re-levelling by eye reintroduces exactly the
+  offset the approach avoids.
+- The straight line in `AxisCalibration` holds within ±1.4°, where the model
+  error (0.057°/0.071° rms) is well under one 40-count command. It is not a
+  general claim about the linkage, which is a crank and loses authority further
+  out; a nonlinear form is the eventual answer if the maze needs more tilt.
+- **The ESP32 serial link is unreliable above 115200 and re-delivers frames.**
+  Flash reads at 921600 and 460800 both stalled at exactly `0x6000`, and over 5 s
+  the port yielded 1298 frames' worth of bytes when the device had sent 1000.
+  The reader deduplicates on `(seq, esp_micros)`; telemetry and reflashing stay
+  at 115200.
 
 See [the project status](docs/PROJECT_STATUS.md) for detailed measurements and
 the remaining validation plan.

@@ -23,8 +23,14 @@ camera frame
 ```
 
 Maze design, reinforcement-learning policy design, training, and deployment are
-later phases. The perception output deliberately follows the vendored policy
-coordinate contract so it can feed those phases without changing conventions.
+later phases. The perception output deliberately follows the servo contract's
+coordinate conventions so it can feed those phases without changing them.
+
+As of 2026-08-06 a second state-estimation path exists: a BNO086 IMU on an
+ESP32, streaming board tilt at 200 Hz. It is not a replacement for the camera --
+it gives angle only, not marble position -- but it samples fast enough to
+measure actuator dynamics, which the camera at 10-30 Hz does not. See
+[Actuator system identification](#actuator-system-identification) below.
 
 ## Coordinate and angle conventions
 
@@ -108,13 +114,164 @@ not an absolute gravity reference.
 - Added a recorder that saves frames, masks, per-frame measurements, manifests,
   and summaries.
 
+### Actuator system identification
+
+Built and completed on hardware 2026-08-06. `calib/servo_calibration.json` has
+`measured=True`; `angle_to_counts` no longer raises.
+
+The chain is: BNO086 IMU on an ESP32 streaming board tilt at 200 Hz, a sweep
+tool that drives the servos and records settled angles, and a fit tool that
+writes the contract only when the measurement supports the model it encodes.
+
+#### Results
+
+| | roll (servo 1 → alpha) | pitch (servo 2 → beta) |
+| --- | ---: | ---: |
+| deg/count | 0.00474 | 0.00437 |
+| counts_per_rad | 12080 | 13110 |
+| centre (level) | 2350 | 2018 |
+| calibrated range | 1980–2620 | 1694–2334 |
+| backlash, conditioned | 0.024° | 0.040° |
+| cross-coupling | 3.7% | 0.9% |
+| step latency | 190 ms | 146 ms |
+| rise time (10–90%) | 216 ms | 200 ms |
+| max rate | 10.4°/s | 10.1°/s |
+| usable tilt | ±1.4° | ±1.4° |
+
+Linkage reduction is roughly 20:1 on both axes. Cross-coupling is small, so the
+independent-axis form `ServoContract` encodes is the right shape.
+
+Supporting measurements, all IMU-referenced unless noted:
+
+| Quantity | Value |
+| --- | --- |
+| IMU rate / noise / drift | 200 Hz, 0.005–0.006°, 0.013° over 6 min |
+| Command resolution floor | <20 counts unusable, 40 practical, 80 repeatable |
+| Electrical latency (encoder only) | 95–120 ms, irreducible |
+| Mechanical lag | 48–64 ms (pitch), 126–224 ms (roll, unconditioned) |
+| Load, lifting vs lowering | ~1050 vs ~72; **0 holding at level** |
+| Overload trip | 80% for 2 s, then 20% output |
+| Servo variant | 7.4 V / ~19 kg·cm, model 777, fw 3.10 |
+
+#### Method: the two things that made it work
+
+**Approach conditioning.** Every sweep point is reached from a fixed side, three
+times, before the angle is read (`--condition-counts`, `--condition-cycles`).
+Backlash fell from 0.734°/0.197° to 0.024°/0.040° — thirty-fold on roll — and
+reproduced across two runs. Returning repeatedly to one count from a fixed side
+settles to ±0.009° after about three cycles, against 0.73° when direction
+varies. The lost motion is real but entirely deterministic; earlier sweeps
+sampled both sides of it and read the difference as unreliability.
+
+**Configuration pinned.** `STS3215Bus.CANONICAL_CONFIG` holds the motion
+settings every measurement was taken under, with `apply_config` (write and
+verify) and `check_config` (report drift). `ramp_to` no longer writes
+`ACCELERATION` or `GOAL_SPEED` unless asked; it previously rewrote both on every
+call, so any caller could invalidate the calibration silently.
+
+`ACCELERATION = 50` is measured, not chosen: a 160-count step gave 270 ms of
+board rise at the old value of 20 and 146 ms at 50, with 150 no better. Goal
+speed was measured *not* to limit — rise time was flat across 100/200/500/1000.
+**`GOAL_SPEED = 0` is not "maximum"** on this firmware; under it a 160-count step
+moved the board 0.031° in 1.26 s, and `ramp_to` now rejects it.
+
+#### What was ruled out
+
+Servo 1 looked unreliable for most of the session — 0.73° of apparent backlash,
+6.7% gain reproducibility against servo 2's 0.3%. Four explanations were tested
+and failed, and recording them matters because each was believed at the time:
+
+| Hypothesis | Test | Result |
+| --- | --- | --- |
+| Plate mechanically constrained | load guard aborts | guard was too strict; lifting legitimately draws >1000 while travelling normally |
+| Loose linkage | physical inspection | tight |
+| Servo droop under load | encoder vs goal at P = 32/64/128 | lands on goal ±3 counts, zero load at rest; raising P changed nothing |
+| IMU drift | 6-minute still log | 0.013° drift, 0.126° range — the sensor is good |
+
+The answer was approach direction, above. Two corrections worth keeping:
+
+- The load guard originally aborted on **load alone**, which rejected every
+  upward move and read convincingly as a seized mechanism. A stall is high load
+  **and no progress**; `ramp_to` now requires both, over several samples, and
+  judges progress from an optional `motion_probe` (the IMU) rather than the
+  encoder — servo 1 once advanced 200 counts through a dead zone while the plate
+  moved 0.08°.
+- Servo 1's travel limit was **numeric, not mechanical**. Level sat at count
+  4093 of 4095, so the controller could not be handed a larger number.
+  `calibrate_middle` (FEETECH's own middle-position calibration) renumbered both
+  servos to 2048 with the board moving 0.0007°. An earlier version of this
+  document recommended re-indexing the horn mechanically; that was wrong, and it
+  was wrong because the mechanism was assumed rather than read — the servo's own
+  limit registers said plainly the constraint was numeric.
+
+#### Acceptance: why the linearity gate was changed
+
+Both axes sit at 1.3–2.4% of span across runs, straddling the original 2% limit,
+so pass/fail flipped between runs and between servos. Percentage-of-span is a
+relative measure, and over a ~3° span it condemns errors nothing can act on:
+
+| | model error | one 40-count command | share |
+| --- | ---: | ---: | ---: |
+| roll | 0.057° | 0.190° | 30% |
+| pitch | 0.071° | 0.175° | 41% |
+
+The linear model is finer than the smallest command this rig can issue — 40
+counts, below which steps do not reliably keep their sign. `fit_sysid` now
+accepts a residual under half of one commandable step, records the comparison in
+its notes, and still blocks anything larger; two tests cover both directions.
+`RATIO_MIN` was also widened from 0.05 to 0.01, because this rig's genuine ~20:1
+reduction (ratio 0.050) tripped a guessed plausibility bound.
+
+#### Limits to carry into the simulator
+
+- **Gain depends on where it is measured.** Servo 2 read 0.00540 deg/count over
+  ±400 counts, 0.00463 over ±320 centred at 2047, and 0.00437 over ±320 centred
+  at 2018. The stored value is an average over the swept range and **must not be
+  extrapolated past it**. The falloff is shared by both axes and is real
+  geometry; a nonlinear mapping is the eventual right answer.
+- **Action quantisation belongs in the model.** Commands under 20 counts do not
+  reliably keep their sign; 40 counts (~0.19°) is the practical floor. A policy
+  trained on continuous tilt will learn authority the hardware does not have.
+- **Backlash is deterministic, not noise.** Model it as reversal-triggered lost
+  motion, not as Gaussian error. Under conditioning it is 0.024°/0.040°;
+  unconditioned it is 0.734°/0.197°, and a dynamic controller that cannot
+  condition will see the latter.
+- **Dynamics are conditional on the pinned config.** Latency and rise time were
+  measured at `ACCELERATION = 50`, `GOAL_SPEED = 500`, recorded in
+  `servo_config`. A controller that changes them must re-measure.
+- **~100 ms of the latency is electrical and irreducible**, which caps any
+  feedback loop's bandwidth at roughly 0.2–0.3 Hz. Feedforward through the
+  calibration plus reversal compensation is the right control shape here; a fast
+  PID is not.
+
+#### Remaining
+
+1. **Camera cross-check.** The only independent validation of the IMU, and the
+   one item from the original plan never run — the See3CAM was unplugged.
+   Everything above rests on a single sensor whose internal consistency is good
+   (0.013° drift, clean axis separation, gains reproducing to 0.3%) but which
+   has never been checked against another instrument.
+2. Nonlinear `AxisCalibration`, if ±1.4° proves too narrow for the maze.
+3. Feedforward + reversal-compensation control layer, mirrored in the simulator.
+4. MuJoCo model using the table above.
+
 ### Verification
 
 - Added synthetic tests for angle convention, tag corner order and rotation,
   known-tag filtering, pose recovery, zeroing, blue-ball detection, coordinate
   recovery, distractor rejection, outside-board rejection, merged-component
   recovery, full-frame undistortion, and overlay projection consistency.
-- Current result: **21 tests pass**.
+- Added synthetic tests for the IMU wire format (CRC rejection, resync after a
+  dropped byte, sequence-gap counting, sequence wrap, stale-pong rejection) and
+  for the sysid fits (gain/sign/centre recovery, backlash recovery, curvature
+  showing up in the residual, latency and rise time from a first-order step,
+  and the acceptance gate that decides `measured=True`).
+- One real defect was found this way: with a step window shorter than the
+  settling time, the final value came from a tail that was still moving, so the
+  90% threshold was computed against a truncated delta and a confidently wrong,
+  too-fast rise time was returned. `_step_metrics` now checks that the tail has
+  settled and reports an error instead.
+- Current result: **66 tests pass** (21 vision, 18 IMU, 27 sysid).
 - A dry render on a real recorded frame placed the undistorted origin at about
   `(288.7, 691.7)` px, with finite +X/+Y endpoints inside the 1280 x 800 view.
 

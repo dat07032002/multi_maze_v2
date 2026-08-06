@@ -1,0 +1,8 @@
+{
+  "servo_counts": {
+    "1": 2046,
+    "2": 2048
+  },
+  "captured": "2026-08-06T15:27:51",
+  "note": "Servo positions at which the board was judged level. These are raw counts: no count->angle calibration exists yet, so this records where level is, not what level means in radians. Pair it with calib/imu_zero.json, which records the same pose as a rotation."
+}
