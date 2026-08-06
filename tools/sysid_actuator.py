@@ -716,8 +716,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--servo-port", default="/dev/ttyUSB0")
-    parser.add_argument("--imu-port", default="/dev/ttyUSB1")
+    parser.add_argument("--servo-port", default=None, help="auto-resolved by USB id; override only if needed")
+    parser.add_argument("--imu-port", default=None, help="auto-resolved by USB id; override only if needed")
     parser.add_argument("--zero", type=Path, default=DEFAULT_ZERO)
     parser.add_argument("--experiment", choices=["0", "A", "B", "C", "all"],
                         default="all")

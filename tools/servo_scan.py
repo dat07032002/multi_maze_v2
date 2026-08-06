@@ -89,7 +89,7 @@ def _status_text(status: int) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", default="/dev/ttyUSB0")
+    parser.add_argument("--port", default=None, help="auto-resolved by USB id; override only if needed")
     parser.add_argument("--baud", type=int, default=None,
                         help="skip the baud scan and use this rate")
     parser.add_argument("--max-id", type=int, default=20,

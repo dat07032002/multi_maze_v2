@@ -186,7 +186,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--port", default="/dev/ttyUSB0")
+    parser.add_argument("--port", default=None, help="auto-resolved by USB id; override only if needed")
     parser.add_argument("--id", type=int, default=1, choices=SERVO_IDS,
                         help="servo selected at startup")
     parser.add_argument("--set", action="append", default=[], metavar="ID=COUNT",

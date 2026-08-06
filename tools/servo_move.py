@@ -96,7 +96,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--port", default="/dev/ttyUSB0")
+    parser.add_argument("--port", default=None, help="auto-resolved by USB id; override only if needed")
     parser.add_argument("--baud", type=int, default=1_000_000)
     parser.add_argument("--id", type=int, choices=ALL_IDS, default=None,
                         help="servo to move (default: both, for --status/--release)")

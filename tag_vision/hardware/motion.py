@@ -4,11 +4,14 @@ Every tool that commands motion needs the same two behaviours, and neither is
 optional on this rig: step out gradually rather than jumping, and abort if the
 servo stalls.
 
-"Stalls" is doing real work in that sentence. The plate is heavy, so lifting it
-draws about 1080 load against roughly 72 to lower it -- above the servo's own
-1000 limit -- while the encoder advances normally the whole time. An earlier
-version aborted on load alone and so rejected every upward move, which read
-convincingly as a seized mechanism rather than as a guard that was too strict.
+"Stalls" is doing real work in that sentence. An earlier version aborted on load
+alone and rejected every upward move, which read convincingly as a seized
+mechanism. The immediate cause was a decoding bug -- PRESENT_LOAD's direction
+lives in bit 10, and reading it as bit 15 made loads in one direction report as
+1024 plus their true value, so a gentle -24 arrived as +1048. But the guard was
+wrong independently of that: load alone does not distinguish a servo working
+from a servo stuck, and the encoder kept advancing throughout.
+
 The test is therefore high load *with no progress*, held over several samples.
 
 Backing off to the start before releasing torque matters: cutting torque while

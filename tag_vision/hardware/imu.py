@@ -29,6 +29,7 @@ import numpy as np
 import serial
 
 from ..core.board_pose import angles_from_rotation
+from .sts3215 import IMU_USB_MARKER, find_port
 
 SYNC0 = 0xA5
 SYNC1 = 0x5A
@@ -37,7 +38,14 @@ TYPE_SAMPLE = 0x01
 TYPE_PONG = 0x02
 TYPE_STATUS = 0x03
 
-DEFAULT_PORT = "/dev/ttyUSB1"
+# Resolved by USB identity, not by number: the CP2102 (IMU) and CH340 (servo
+# bus) have already swapped ttyUSB numbers once when the rig was reconnected,
+# and opening the wrong one is silent rather than obvious.
+def find_imu_port() -> str:
+    return find_port(IMU_USB_MARKER, "/dev/ttyUSB1")
+
+
+DEFAULT_PORT = None
 # Fixed at 115200 because this link is demonstrably unreliable above it: flash
 # reads at 921600 and 460800 both stalled at exactly 0x6000. Raising this
 # without re-testing the link will produce jitter that looks like servo latency.
@@ -109,7 +117,7 @@ class BNO086Stream:
 
     def __init__(
         self,
-        port: str = DEFAULT_PORT,
+        port: str | None = None,
         baudrate: int = DEFAULT_BAUDRATE,
         timeout: float = 1.0,
         transport=None,
@@ -120,6 +128,7 @@ class BNO086Stream:
         streams -- including corruption and dropped bytes, which are the cases
         that matter and which real hardware will not produce on demand.
         """
+        port = port if port is not None else find_imu_port()
         self.port = port
         self.serial = transport if transport is not None else serial.Serial(
             port, baudrate, timeout=timeout)

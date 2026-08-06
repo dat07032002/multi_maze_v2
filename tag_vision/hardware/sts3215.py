@@ -25,11 +25,35 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
 
 import serial
 
 BROADCAST_ID = 0xFE
 DEFAULT_BAUDRATE = 1_000_000
+
+# The FEETECH bus is behind a CH340; the IMU is behind a CP2102. Which one gets
+# ttyUSB0 depends on enumeration order, and they have already swapped once when
+# the rig was unplugged and reconnected. Resolving by USB identity rather than
+# by number is what stops a servo tool opening the ESP32, or a flashing tool
+# opening the servo bus.
+BY_ID_DIR = "/dev/serial/by-id"
+SERVO_USB_MARKER = "1a86_USB_Serial"       # CH340
+IMU_USB_MARKER = "Silicon_Labs_CP2102"     # CP2102
+
+
+def find_port(marker: str, fallback: str) -> str:
+    """Resolve a serial port by USB identity, falling back to a fixed path."""
+    directory = Path(BY_ID_DIR)
+    if directory.is_dir():
+        for entry in sorted(directory.iterdir()):
+            if marker in entry.name:
+                return str(entry.resolve())
+    return fallback
+
+
+def find_servo_port() -> str:
+    return find_port(SERVO_USB_MARKER, "/dev/ttyUSB0")
 
 # Baud-rate register values, index is the value written to Register.BAUD_RATE.
 BAUDRATE_TABLE = {
@@ -211,10 +235,11 @@ class STS3215Bus:
 
     def __init__(
         self,
-        port: str = "/dev/ttyUSB0",
+        port: str | None = None,
         baudrate: int = DEFAULT_BAUDRATE,
         timeout_s: float = 0.05,
     ):
+        port = port if port is not None else find_servo_port()
         self.port_name = port
         self.baudrate = int(baudrate)
         self.timeout_s = float(timeout_s)
@@ -361,7 +386,18 @@ class STS3215Bus:
         block = self.read(servo_id, Register.PRESENT_POSITION, 11)
         position = block[0] | (block[1] << 8)
         speed = _to_signed(block[2] | (block[3] << 8))
-        load = _to_signed(block[4] | (block[5] << 8))
+        # PRESENT_LOAD carries its direction in **bit 10**, not bit 15: the
+        # magnitude field is 10 bits, which is what the documented 0-1000 =
+        # 0-100% range needs and no more.
+        #
+        # Decoding it as bit 15 made every load in one direction read as
+        # 1024 + its true value. That is where "lifting draws ~1050 against ~72
+        # lowering" came from -- the real figures are about -24 and +72, small
+        # and comparable. Three things gave it away: readings clustered only in
+        # 0-72 and 1044-1072 with nothing between, a servo sitting at a supposed
+        # 105% of rated torque held 25 C flat for eight seconds, and 1048 is
+        # exactly 1024 + 24.
+        load = _to_signed(block[4] | (block[5] << 8), sign_bit=10)
         voltage = block[6] * 0.1
         temperature = block[7]
         moving = bool(block[10])

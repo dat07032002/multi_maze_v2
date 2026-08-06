@@ -40,7 +40,7 @@ SERVO_IDS = (1, 2)
 NOISE_GATE_DEG = 0.05
 
 
-def read_servo_counts(port: str) -> dict[int, int]:
+def read_servo_counts(port: str | None) -> dict[int, int]:
     """Present position of both tilt servos, or an empty dict if unreachable.
 
     Recorded alongside the zero because the zero is only meaningful together
@@ -215,10 +215,10 @@ def capture_zero(imu: BNO086Stream, args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--port", default=DEFAULT_PORT,
-                        help="ESP32 serial port (default: %(default)s)")
-    parser.add_argument("--servo-port", default="/dev/ttyUSB0",
-                        help="FEETECH bus port (default: %(default)s)")
+    parser.add_argument("--port", default=None,
+                        help="ESP32 serial port; auto-resolved by USB id")
+    parser.add_argument("--servo-port", default=None,
+                        help="FEETECH bus port; auto-resolved by USB id")
     parser.add_argument("--seconds", type=float, default=None,
                         help="run for this long, then report; default is until Ctrl-C")
     parser.add_argument("--capture-zero", action="store_true",
@@ -229,7 +229,10 @@ def main() -> int:
                         help="zero file to write (default: %(default)s)")
     args = parser.parse_args()
 
-    if args.port == args.servo_port:
+    # Only meaningful when both were given explicitly; resolution keeps them
+    # apart otherwise. This guard once passed while --servo-port pointed at the
+    # IMU, because the numbers had swapped underneath a hardcoded default.
+    if args.port is not None and args.port == args.servo_port:
         parser.error("--port and --servo-port must differ; the IMU is on the "
                      "CP2102 and the servos are on the CH340")
 

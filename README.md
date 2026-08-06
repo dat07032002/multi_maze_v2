@@ -57,9 +57,12 @@ point where it touches the board.
 | Tilt servos | Two FEETECH STS3215, ids 1 and 2, 1 Mbps on `/dev/ttyUSB0` |
 | Servo mode | Position (register 33 = 0), 0-4095 counts over 360 deg |
 | IMU | SparkFun BNO086, I2C on ESP32 GPIO16/17, game rotation vector @ 200 Hz |
-| IMU link | ESP32-D0WD-V3 on CP2102, `/dev/ttyUSB1` at 115200 |
-| Servo calibration | Measured 2026-08-06. Roll 0.00474 deg/count, pitch 0.00437 |
-| Usable tilt | ±1.4° on both axes, centres at counts 2350 / 2018 |
+| IMU link | ESP32-D0WD-V3 on CP2102, 115200; ports resolved by USB id |
+| Servo calibration | Measured 2026-08-06. Roll 0.00487 deg/count, pitch 0.00502 |
+| Level at | counts 2215 (roll) / 2053 (pitch) |
+| Commandable tilt | ±4.0°, calibrated headroom ±5.42° / ±5.78° |
+| Mechanical travel | roll ±7.00°, pitch ±8.36° |
+| Backlash (operational) | **~1.35°** — the dominant error by ~7x |
 | Command resolution | 40 counts (~0.19°) practical floor; under 20 is unusable |
 
 The checked-in tag coordinates in
@@ -260,17 +263,24 @@ test/                          synthetic geometry, pose, detector, IMU, fit test
   internal consistency is good (0.013° drift over 6 minutes, clean axis
   separation, gains reproducing to 0.3%), but the camera cross-check remains the
   one validation not yet run.
-- **The servo gain depends on where it is measured**, because the linkage loses
-  authority with travel: pitch read 0.00540 deg/count over ±400 counts and
-  0.00437 over ±320. The calibration is an average over the swept range and must
-  not be extrapolated past it.
+- **The calibration is valid over the range it was swept** (±1200 counts,
+  roughly ±5.5°) and must not be extrapolated past it. Within that range a
+  straight line holds well -- 12° of span at under 2% residual -- so the
+  nonlinear form once thought necessary is not.
+- **Absolute level is repeatable to about 0.4°.** The fitted centre moved 85
+  counts between two consecutive sweeps with no mechanical change. Relative
+  moves are considerably more trustworthy than absolute pose.
 - **Commands under 20 counts do not reliably keep their sign.** 40 counts
   (~0.19°) is the practical floor, 80 is repeatable to a few percent. Any
   controller or policy step finer than that is commanding noise.
-- **Backlash is direction-dependent, not random.** Approached consistently the
-  axes repeat to ~0.01°; with mixed directions roll shows 0.73°. Static
-  positioning should condition its approach; dynamic control must model the
-  lost motion instead.
+- **Backlash is the dominant error, at ~1.35° unconditioned.** That is roughly
+  seven times the model residual (0.23°), the command resolution (0.19°) and the
+  IMU noise (0.006°) combined. It is deterministic, not random: approached
+  consistently from one side the axes repeat to 0.03°. Static positioning should
+  condition its approach and gets a 40x more precise result; dynamic control
+  must feed the lost motion forward instead -- about 277 counts on roll, 269 on
+  pitch, injected at a direction reversal. **Simulators must use the
+  unconditioned figure**, or the model will be far more precise than the board.
 - The IMU level zero is captured **in place**, relying on the board being
   physically level with the IMU already mounted. That removes the need to
   measure a mount offset, but it is perishable: bumping the plate or re-mounting

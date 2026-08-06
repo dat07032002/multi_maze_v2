@@ -287,6 +287,23 @@ def main() -> int:
         max_tilt_rad=math.radians(args.max_tilt_deg),
         servo_config=data.get("preflight", {}).get("configs", {}),
     )
+    # max_tilt must fit inside the range the fit was measured over, or
+    # action_to_counts silently clamps and the policy's action space quietly
+    # collapses: +-0.5 and +-1.0 map to the same counts and nothing complains.
+    # The travel envelope is much larger than the calibrated range and it is
+    # easy -- demonstrated -- to reach for the wrong one.
+    for name, axis in (("roll", contract.roll), ("pitch", contract.pitch)):
+        headroom = min(axis.center_counts - axis.min_counts,
+                       axis.max_counts - axis.center_counts)
+        needed = contract.max_tilt_rad * axis.counts_per_rad
+        if needed > headroom:
+            supported = math.degrees(headroom / axis.counts_per_rad)
+            print(f"\n  WARNING: max_tilt {args.max_tilt_deg:.2f} deg needs "
+                  f"{needed:.0f} counts on {name} but only {headroom:.0f} are "
+                  f"calibrated. Commands beyond +-{supported:.2f} deg will "
+                  f"clamp. Either lower --max-tilt-deg to {supported:.2f}, or "
+                  "re-run the sweep over the range you intend to use.")
+
     contract.to_json(args.output)
     print(f"\nwrote {args.output}")
     print(f"  roll  <- servo {roll_id} (alpha)")

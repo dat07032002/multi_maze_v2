@@ -125,33 +125,85 @@ writes the contract only when the measurement supports the model it encodes.
 
 #### Results
 
+Calibrated from a conditioned sweep over ±1200 counts, centred on level.
+
 | | roll (servo 1 → alpha) | pitch (servo 2 → beta) |
 | --- | ---: | ---: |
-| deg/count | 0.00474 | 0.00437 |
-| counts_per_rad | 12080 | 13110 |
-| centre (level) | 2350 | 2018 |
-| calibrated range | 1980–2620 | 1694–2334 |
-| backlash, conditioned | 0.024° | 0.040° |
-| cross-coupling | 3.7% | 0.9% |
-| step latency | 190 ms | 146 ms |
-| rise time (10–90%) | 216 ms | 200 ms |
-| max rate | 10.4°/s | 10.1°/s |
-| usable tilt | ±1.4° | ±1.4° |
+| deg/count | 0.00487 | 0.00502 |
+| counts_per_rad | 11776 | 11412 |
+| centre (level) | 2215 | 2053 |
+| calibrated range | 929–3329 | 902–3302 |
+| span measured | 11.49° | 12.22° |
+| linearity residual | 1.99% (0.229°) | 1.68% (0.205°) |
+| **backlash, conditioned** | 0.031° | 0.140° |
+| **backlash, unconditioned** | **1.06° mean, 1.42° max** | **0.94° mean, 1.54° max** |
+| step latency | 185 ms | 150 ms |
+| rise time (10–90%) | 256 ms | 230 ms |
+| max rate | 6.9°/s | 8.2°/s |
+| `max_tilt` | ±4.0° (headroom ±5.42°) | ±4.0° (headroom ±5.78°) |
 
-Linkage reduction is roughly 20:1 on both axes. Cross-coupling is small, so the
-independent-axis form `ServoContract` encodes is the right shape.
+A straight line holds across the **whole** working range: 12° of span at under
+2% residual, better relative accuracy than the earlier ±320-count sweep managed
+over 3°. The nonlinear `AxisCalibration` that seemed inevitable is not needed.
 
-Supporting measurements, all IMU-referenced unless noted:
+##### Backlash is the dominant error, and only one number is operational
 
-| Quantity | Value |
-| --- | --- |
-| IMU rate / noise / drift | 200 Hz, 0.005–0.006°, 0.013° over 6 min |
-| Command resolution floor | <20 counts unusable, 40 practical, 80 repeatable |
-| Electrical latency (encoder only) | 95–120 ms, irreducible |
-| Mechanical lag | 48–64 ms (pitch), 126–224 ms (roll, unconditioned) |
-| Load, lifting vs lowering | ~1050 vs ~72; **0 holding at level** |
-| Overload trip | 80% for 2 s, then 20% output |
-| Servo variant | 7.4 V / ~19 kg·cm, model 777, fw 3.10 |
+| error source | magnitude |
+| --- | ---: |
+| IMU noise | 0.006° |
+| command resolution (40 counts) | 0.19° |
+| linear model residual | 0.23° |
+| **backlash, unconditioned** | **~1.35°** |
+
+Backlash is roughly **seven times everything else combined**. The conditioned
+figures (0.031°/0.140°) describe what the mechanism can do when every approach
+comes from the same side; the unconditioned ones describe what a controller that
+reverses direction actually gets. **Use 1.35° for the simulator.** Putting the
+conditioned number in would make a simulated roll axis forty times more precise
+than the hardware.
+
+The hysteresis is flat at 1.3–1.4° across the middle of the sweep and falls to
+zero at both turnarounds, which is the signature of constant lost motion rather
+than load-dependent compliance -- compliance would grow toward the extremes
+where gravity torque is highest, and it does the opposite. So it models as a
+reversal-triggered deadband, and needs no dependence on tilt angle.
+
+It is also feedforward-correctable, and the constant is now measured: inject
+about **277 counts on roll, 269 on pitch** at a direction reversal. With a ~100 ms
+irreducible dead time capping any feedback loop at 0.2-0.3 Hz, that is the
+highest-value control code for this rig.
+
+#### Travel limits, 2026-08-06 (superseded by the renumbering below)
+
+Stepping outward from level until the servo ran out of counts:
+
+| | measured extremes | tilt span | safe range (300-count backoff) | safe span |
+| --- | --- | ---: | --- | ---: |
+| roll | 75 – 4025 | 18.06° | 371 – 3730 | 15.55° |
+| pitch | 51 – 4088 | 20.96° | 347 – 3794 | 17.87° |
+
+All four directions ended on the **servo's 0/4095 count limit**, not on a stall
+or a gain collapse. That does not prove the plate was still free: the guard
+cannot tell "resting against a stop" from "travelling" once the servo stops
+being asked to move, so a 300-count backoff is applied on each side and recorded
+in `calib/servo_travel_limits.json`.
+
+Within the safe range:
+
+| | usable about current level | best if level were centred |
+| --- | ---: | ---: |
+| roll | ±5.41° | **±7.77°** |
+| pitch | ±8.12° | **±8.93°** |
+
+**±10° is not reachable on either axis** inside the safe range. Roll caps at
+±7.77° even perfectly centred, and would need roughly 29% more linkage ratio;
+pitch needs about 12%. Level is currently 2.36° off-centre in roll's span and
+0.81° in pitch's, so re-centring is worth more than any other single change.
+
+These limits are deliberately **not** the same as `min_counts`/`max_counts` in
+`servo_calibration.json`. Those are the range the linear fit was measured over
+(±320 counts); these are the range it is safe to drive. Commanding angles across
+the full safe range would extrapolate the fit roughly five times past its data.
 
 #### Method: the two things that made it work
 
@@ -183,7 +235,7 @@ and failed, and recording them matters because each was believed at the time:
 
 | Hypothesis | Test | Result |
 | --- | --- | --- |
-| Plate mechanically constrained | load guard aborts | guard was too strict; lifting legitimately draws >1000 while travelling normally |
+| Plate mechanically constrained | load guard aborts | guard was too strict, and the loads it tripped on were a decoding bug (see below) |
 | Loose linkage | physical inspection | tight |
 | Servo droop under load | encoder vs goal at P = 32/64/128 | lands on goal ±3 counts, zero load at rest; raising P changed nothing |
 | IMU drift | 6-minute still log | 0.013° drift, 0.126° range — the sensor is good |
@@ -232,10 +284,11 @@ reduction (ratio 0.050) tripped a guessed plausibility bound.
 - **Action quantisation belongs in the model.** Commands under 20 counts do not
   reliably keep their sign; 40 counts (~0.19°) is the practical floor. A policy
   trained on continuous tilt will learn authority the hardware does not have.
-- **Backlash is deterministic, not noise.** Model it as reversal-triggered lost
-  motion, not as Gaussian error. Under conditioning it is 0.024°/0.040°;
-  unconditioned it is 0.734°/0.197°, and a dynamic controller that cannot
-  condition will see the latter.
+- **Backlash is deterministic, not noise, and it dominates.** Model it as
+  reversal-triggered lost motion, not as Gaussian error, and use the
+  **unconditioned** figure of ~1.35° -- roughly seven times every other error
+  source combined. The conditioned 0.031°/0.140° describes calibration
+  conditions, not operation.
 - **Dynamics are conditional on the pinned config.** Latency and rise time were
   measured at `ACCELERATION = 50`, `GOAL_SPEED = 500`, recorded in
   `servo_config`. A controller that changes them must re-measure.
@@ -243,6 +296,25 @@ reduction (ratio 0.050) tripped a guessed plausibility bound.
   feedback loop's bandwidth at roughly 0.2–0.3 Hz. Feedforward through the
   calibration plus reversal compensation is the right control shape here; a fast
   PID is not.
+
+#### Range after renumbering, 2026-08-06
+
+`calibrate_middle` renumbered both servos so level reads 2048, moving the count
+wrap away from roll's travel. The board moved 0.003° -- nothing physical
+changed, only the labels -- and roll's usable range improved:
+
+| | before | after |
+| --- | ---: | ---: |
+| roll | ±5.40° | **±7.00°** |
+| pitch | ±8.39° | ±8.36° |
+
+Loads at every new extreme were 24-28, peak 40 anywhere, so the plate is not
+contacting anything: the limit was purely the count wrap. That evidence was
+unreadable before the load-decoding fix.
+
+±10° is still out of reach. Roll would need roughly 30% more linkage ratio, and
+the torque case for that is comfortable -- normal operation sits at 3-4% of
+rated, so a faster linkage would reach perhaps 5%.
 
 #### Remaining
 

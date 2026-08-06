@@ -66,6 +66,10 @@ static bool imu_ok = false;
 // is why the timestamp is sent per sample rather than assumed from the rate.
 static uint8_t seq = 0;
 
+// Recovery pacing for a sensor that failed to start.
+static const uint32_t RETRY_INTERVAL_MS = 2000;
+static uint32_t last_retry_ms = 0;
+
 // Dallas/Maxim CRC-8 (poly 0x31). Small enough to be worth having: a corrupt
 // quaternion that still parses would look like a real board movement.
 static uint8_t crc8(const uint8_t *data, size_t len) {
@@ -128,28 +132,44 @@ static bool enableReports() {
   return imu.enableGameRotationVector(REPORT_INTERVAL_MS);
 }
 
+// Free a bus that a device is holding low.
+//
+// The BNO086 has its own supply and no reset line wired here, so resetting the
+// ESP32 does not reset the sensor. If it is stuck partway through a transaction
+// it keeps SDA low, and every subsequent begin() fails while the device still
+// ACKs its address -- which is exactly what happened after the rig was
+// unplugged and reconnected: an I2C scan found 0x4B present, yet begin() would
+// not complete. Clocking SCL lets the device finish the byte it was in.
+static void recoverBus() {
+  pinMode(PIN_SDA, INPUT_PULLUP);
+  pinMode(PIN_SCL, OUTPUT);
+  for (int i = 0; i < 9 && digitalRead(PIN_SDA) == LOW; i++) {
+    digitalWrite(PIN_SCL, LOW);  delayMicroseconds(5);
+    digitalWrite(PIN_SCL, HIGH); delayMicroseconds(5);
+  }
+  digitalWrite(PIN_SCL, HIGH);
+}
+
+// Try to bring the sensor up. Safe to call repeatedly.
+static bool tryBegin() {
+  recoverBus();
+  Wire.begin(PIN_SDA, PIN_SCL, I2C_HZ);
+  delay(50);
+  if (!(imu.begin(0x4B, Wire) || imu.begin(0x4A, Wire))) return false;
+  return enableReports();
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(200);
 
-  Wire.begin(PIN_SDA, PIN_SCL, I2C_HZ);
-
   // Two addresses exist in the wild: 0x4B is the SparkFun default, 0x4A is the
-  // ADR-jumper alternative. Trying both costs nothing and turns a silent
-  // no-data condition into an obvious one.
-  imu_ok = imu.begin(0x4B, Wire) || imu.begin(0x4A, Wire);
-  if (!imu_ok) {
-    sendStatus("BNO08x not found on SDA=16 SCL=17 at 0x4B/0x4A. "
-               "If this board is a WROVER, GPIO16/17 are PSRAM: use 21/22.");
-    return;
-  }
-
-  if (!enableReports()) {
-    imu_ok = false;
-    sendStatus("BNO08x found but enableGameRotationVector failed");
-    return;
-  }
-  sendStatus("BNO086 ready: game rotation vector @ 200 Hz");
+  // ADR-jumper alternative. tryBegin attempts both after recovering the bus.
+  imu_ok = tryBegin();
+  sendStatus(imu_ok ? "BNO086 ready: game rotation vector @ 200 Hz"
+                    : "BNO08x did not start; will keep retrying. If it never "
+                      "comes up, check 3V3/GND/SDA=16/SCL=17 -- and note a "
+                      "WROVER uses 16/17 for PSRAM, so try 21/22.");
 }
 
 void loop() {
@@ -176,9 +196,18 @@ void loop() {
     }
   }
 
+  // Retry rather than giving up for the lifetime of the boot. The sensor can
+  // be left latched by a replug, and since resetting the ESP32 does not reset
+  // it, a one-shot begin() in setup() would strand the stream permanently --
+  // which is what it did.
   if (!imu_ok) {
-    delay(500);
-    sendStatus("BNO08x unavailable");
+    if (millis() - last_retry_ms >= RETRY_INTERVAL_MS) {
+      last_retry_ms = millis();
+      imu_ok = tryBegin();
+      sendStatus(imu_ok ? "BNO086 recovered"
+                        : "BNO08x still unavailable, retrying");
+    }
+    delay(20);
     return;
   }
 

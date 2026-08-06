@@ -1,0 +1,83 @@
+{
+  "measured": "2026-08-06",
+  "note": [
+    "Hard travel bounds for raw-count tools. Distinct from the calibrated",
+    "range in servo_calibration.json: these say where it is SAFE to drive,",
+    "that says where the linear angle mapping is TRUSTED. The safe range is",
+    "much wider than the calibrated one, and commanding angles across it",
+    "would extrapolate the fit far past its data."
+  ],
+  "method": [
+    "Stepped outward from level in 100-count increments until the servo hit",
+    "its 0/4095 count limit, with an IMU motion probe and stall guard. All",
+    "four directions ended on the count limit rather than a stall, so the",
+    "plate may well have been against a mechanical stop before the servo ran",
+    "out of numbers -- the guard cannot distinguish 'resting against a stop'",
+    "from 'travelling freely' when the servo stops being asked to move.",
+    "The 300-count backoff exists for exactly that uncertainty."
+  ],
+  "backoff_counts": 300,
+  "roll": {
+    "servo_id": 1,
+    "level_counts": 2350,
+    "measured_extremes": {
+      "min_counts": 75,
+      "min_tilt_deg": -11.325,
+      "max_counts": 4025,
+      "max_tilt_deg": 6.74
+    },
+    "safe": {
+      "min_counts": 343,
+      "min_tilt_deg": -10.2,
+      "max_counts": 3734,
+      "max_tilt_deg": 5.4,
+      "span_deg": 15.6,
+      "symmetric_about_current_level_deg": 5.4,
+      "symmetric_if_level_were_centred_deg": 7.8
+    }
+  },
+  "pitch": {
+    "servo_id": 2,
+    "level_counts": 2016,
+    "measured_extremes": {
+      "min_counts": 51,
+      "min_tilt_deg": -9.65,
+      "max_counts": 4088,
+      "max_tilt_deg": 11.313
+    },
+    "safe": {
+      "min_counts": 343,
+      "min_tilt_deg": -8.39,
+      "max_counts": 3698,
+      "max_tilt_deg": 9.51,
+      "span_deg": 17.9,
+      "symmetric_about_current_level_deg": 8.39,
+      "symmetric_if_level_were_centred_deg": 8.95
+    }
+  },
+  "consequences": [
+    "Safe range, level centred:  roll +-7.80 deg, pitch +-8.95 deg.",
+    "Full range, level centred:  roll +-9.03 deg, pitch +-10.48 deg.",
+    "+-10 deg is reachable only on pitch, and only at full range with level",
+    "centred. Roll cannot reach it either way and would need about 11% more",
+    "linkage ratio at full range, or 29% within the safe range.",
+    "Level is currently 2.40 deg off the midpoint of roll's span and 0.56 deg",
+    "off pitch's, so re-centring is worth more than any other single change."
+  ],
+  "safe_counts": {
+    "min": 300,
+    "max": 3795
+  },
+  "load_evidence": [
+    "The backoff was applied because a sweep ending on the count limit cannot",
+    "prove the plate was still free. The load data says it was: at counts 51,",
+    "75, 4025 and 4088 the servos read only 24-28, and the peak anywhere in the",
+    "whole full-range sweep was 32 -- about 3% of rated. A plate pressed",
+    "against a stop would make the servo push hard and the load climb. It does",
+    "not. (These figures are with PRESENT_LOAD decoded on sign bit 10; the",
+    "earlier apparent 1000+ readings were a decoding error.)",
+    "So the 300-count backoff costs roughly 2.5 deg of span for a risk this",
+    "measurement does not show. It is kept as the conservative default, but",
+    "the full range is defensible on the evidence."
+  ]
+}

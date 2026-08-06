@@ -264,7 +264,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--port", default="/dev/ttyUSB0")
+    parser.add_argument("--port", default=None, help="auto-resolved by USB id; override only if needed")
     parser.add_argument("--baud", type=int, default=1_000_000)
     parser.add_argument("--roll-id", type=int, default=1)
     parser.add_argument("--pitch-id", type=int, default=2)
