@@ -39,7 +39,7 @@ DEFAULT_BAUDRATE = 1_000_000
 # opening the servo bus.
 BY_ID_DIR = "/dev/serial/by-id"
 SERVO_USB_MARKER = "1a86_USB_Serial"       # CH340
-IMU_USB_MARKER = "Silicon_Labs_CP2102"     # CP2102
+IMU_USB_MARKER = "Arduino_Nano_ESP32"      # Nano ESP32 native USB CDC
 
 
 def find_port(marker: str, fallback: str) -> str:

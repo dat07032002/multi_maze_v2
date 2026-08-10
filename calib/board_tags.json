@@ -1,5 +1,5 @@
 {
-  "_comment": "NOMINAL values derived from maze_design/maze_256x226.json tag_pads, NOT caliper measurements. Each x_m/y_m is the lower-left of the tag's square OUTER BLACK footprint in the plate frame (origin lower-left, +x right, +y up), computed as pad centre minus half the 18 mm tag. rotation_deg is counter-clockwise in that frame. Wrong values here corrupt the pose invisibly: solvePnP fits whatever geometry it is given and still reports a small reprojection residual. Replace with caliper measurements of the installed tags.",
+  "_comment": "NOMINAL values derived from maze_design/maze_256x226.json tag_pads, NOT caliper measurements. Tag IDs and rotations were verified from a live See3CAM frame on 2026-08-10. Each x_m/y_m is the lower-left of the tag's square OUTER BLACK footprint in the plate frame (origin lower-left, +x right, +y up), computed as pad centre minus half the 18 mm tag. rotation_deg is counter-clockwise in that frame. Wrong values here corrupt the pose invisibly: solvePnP fits whatever geometry it is given and still reports a small reprojection residual. Replace x_m/y_m/size_m with caliper measurements of the installed tags for absolute coordinate accuracy.",
   "measured": false,
   "derived_from": "maze_design/maze_256x226.json",
   "z_note": "Tags are GLUED to the top of the corner pads. The pad top is 8 mm above the playing surface (11 mm print height minus the 3 mm floor) and the tag is 3 mm thick, so the tag face sits at z = 0.011 m. All four shift equally, so alpha/beta are unaffected, but ball coordinates are not: the ray/plane intersection depends on this value.",
@@ -8,16 +8,16 @@
   "family": "tag36h11",
   "tags": [
     {
-      "id": 0,
+      "id": 3,
       "x_m": 0.002636,
       "y_m": 0.204444,
       "size_m": 0.018,
       "z_m": 0.011,
-      "rotation_deg": 0.0,
+      "rotation_deg": 90.0,
       "label": "top-left"
     },
     {
-      "id": 1,
+      "id": 0,
       "x_m": 0.235364,
       "y_m": 0.003556,
       "size_m": 0.018,
@@ -26,21 +26,21 @@
       "label": "bottom-right"
     },
     {
-      "id": 2,
+      "id": 1,
       "x_m": 0.235364,
       "y_m": 0.204444,
       "size_m": 0.018,
       "z_m": 0.011,
-      "rotation_deg": 0.0,
+      "rotation_deg": 180.0,
       "label": "top-right"
     },
     {
-      "id": 3,
+      "id": 2,
       "x_m": 0.002636,
       "y_m": 0.003556,
       "size_m": 0.018,
       "z_m": 0.011,
-      "rotation_deg": 180.0,
+      "rotation_deg": 90.0,
       "label": "bottom-left"
     }
   ]

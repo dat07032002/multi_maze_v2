@@ -20,10 +20,9 @@ import statistics
 import sys
 import threading
 import time
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from pathlib import Path
 
 from contract.servo_contract import ServoContract
 from tag_vision.control.tilt import AxisBacklash, TiltController, TiltLimits
@@ -69,8 +68,8 @@ def interior_median(gaps):
 def measure_backlash(run_path):
     d = json.load(open(run_path))
     out = {}
-    for sid, axis in (("1", "roll"), ("2", "pitch")):
-        f = d["experiment_AB"][sid]
+    for sid, f in d["experiment_AB"].items():
+        axis = {"alpha": "roll", "beta": "pitch"}[f["angle"]]
         key = f["angle"]
         up = {p["commanded_counts"]: p[f"{key}_rad"] for p in f["points"]
               if p["direction"] == "up"}
@@ -155,8 +154,10 @@ def main():
             e_on = report("ON ", res_on)
             print(f"\n  mean |error| roll  {e_off[0]:.3f} -> {e_on[0]:.3f} deg")
             print(f"  mean |error| pitch {e_off[1]:.3f} -> {e_on[1]:.3f} deg")
-            bus.sync_write_positions({1: contract.roll.center_counts,
-                                      2: contract.pitch.center_counts})
+            bus.sync_write_positions({
+                contract.roll.servo_id: contract.roll.center_counts,
+                contract.pitch.servo_id: contract.pitch.center_counts,
+            })
     stop.set()
     print("\n  Note: the first command of each run gets no correction -- "
           "direction is unknown until the axis has moved -- so exclude it when "

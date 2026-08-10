@@ -1,0 +1,12 @@
+{
+  "version": "tag_reload_brake_v1",
+  "source_run": "artifacts/ball_control/20260810_141726",
+  "measured_entry_velocity_mm_s": [-63.1, -20.1],
+  "brake_tilt_deg": [-0.77, 1.35],
+  "trigger_on_reappearance": true,
+  "trigger_speed_mm_s": 25.0,
+  "settle_speed_mm_s": 12.0,
+  "settle_hold_s": 0.5,
+  "minimum_brake_duration_s": 0.35,
+  "max_brake_duration_s": 1.8
+}

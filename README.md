@@ -2,7 +2,7 @@
 
 A ball-maze robot built from scratch, standalone Python, no ROS.
 
-Four parts exist today:
+Six parts exist today:
 
 - **Vision** -- a calibrated overhead camera and four AprilTags give the board's
   two tilt angles; a hybrid blue-colour/circle detector locates a 5.5 mm-radius
@@ -13,8 +13,13 @@ Four parts exist today:
 - **IMU and system identification** -- an ESP32 streams BNO086 tilt at 200 Hz,
   and `tools/sysid_actuator.py` measures the counts-to-angle mapping the servo
   contract needs. See [`firmware/esp32_imu/README.md`](firmware/esp32_imu/README.md).
-
-Not yet built: the simulator, the control loop, and the policy.
+- **Camera maze planning** -- the live image is rectified into board millimetres,
+  segmented into walls and holes, inflated for the marble radius, and planned
+  with clearance-aware A*.
+- **Real model-based RL** -- safe random exploration collects real transitions,
+  a probabilistic PyTorch ensemble learns dynamics on the local GPU, and CUDA
+  CEM plans bounded tilt sequences. Training and checkpoint replacement happen
+  between physical episodes; no simulator or sim-to-real transfer is used.
 
 The main live application is standalone OpenCV and does **not** require ROS:
 
@@ -58,8 +63,8 @@ point where it touches the board.
 | Servo mode | Position (register 33 = 0), 0-4095 counts over 360 deg |
 | IMU | SparkFun BNO086, I2C on ESP32 GPIO16/17, game rotation vector @ 200 Hz |
 | IMU link | ESP32-D0WD-V3 on CP2102, 115200; ports resolved by USB id |
-| Servo calibration | Measured 2026-08-06. Roll 0.00487 deg/count, pitch 0.00502 |
-| Level at | counts 2215 (roll) / 2053 (pitch) |
+| Directional calibration | alpha +0.00477 deg/count on servo 2; beta -0.00442 on servo 1 |
+| Level at | servo 1: 2173 counts; servo 2: 2013 counts |
 | Commandable tilt | ±4.0°, calibrated headroom ±5.42° / ±5.78° |
 | Mechanical travel | roll ±7.00°, pitch ±8.36° |
 | Backlash (operational) | **~1.35°** — the dominant error by ~7x |
@@ -94,6 +99,14 @@ distribution. The main live viewer accesses the camera directly with OpenCV.
 The older calibration/monitoring tools that import `rclpy` additionally require
 a sourced ROS 2 installation and `cv_bridge`.
 
+Install the optional local-GPU RL dependencies after the NVIDIA driver is
+healthy:
+
+```bash
+python3 -m pip install -r requirements-rl.txt
+python3 tools/rl_preflight.py
+```
+
 ## Everyday commands
 
 Run the combined angle and ball viewer:
@@ -101,6 +114,128 @@ Run the combined angle and ball viewer:
 ```bash
 python3 tools/manual_tilt_angle.py
 ```
+
+Cross-check the camera angles against the BNO086 while also viewing ball
+coordinates. With the powered board physically level, press `z` once to save a
+joint reference, then hold several positive and negative tilts on each axis:
+
+```bash
+python3 tools/camera_imu_check.py
+```
+
+The checker records comparisons only while the IMU is settled and reports
+bias, RMSE, and maximum error when it exits. It also displays `FUSED`: IMU
+increments provide the low-latency motion estimate and valid camera poses pull
+that estimate back to an absolute reference with a 0.5 s time constant. Camera
+residuals above 2° are rejected by default. Both values are configurable with
+`--fusion-time-constant` and `--fusion-camera-gate`.
+
+Drive the calibrated board from the keyboard while logging camera, IMU, and
+fused angles, their difference, servo counts, targets, and pose quality:
+
+```bash
+python3 tools/keyboard_motor_compare.py
+```
+
+Use `A/D` for alpha, `S/W` for beta, `0` for the captured level position, and
+`q` to quit and release torque. Runs are stored under
+`artifacts/keyboard_compare/`.
+
+Use the validated direction-dependent motor calibration when precise static
+positioning matters:
+
+```bash
+python3 tools/keyboard_motor_compare.py \
+  --directional-calibration calib/directional_motor.json \
+  --fused-trim
+```
+
+This table is tied to the saved joint zero and must be regenerated after
+re-zeroing or changing the linkage. Fit a new candidate from a settled fused
+bidirectional run with `tools/fit_directional_motor.py <run-directory>`.
+`--fused-trim` adds a slow static correction after each move: it waits for the
+IMU to settle, corrects both axes through the measured coupled Jacobian, caps
+each correction at 80 counts, and stops after at most six attempts. Its 0.10°
+default tolerance is below the rig's measured 0.19° reliable command step.
+
+Build a route from the maze that is physically under the camera, rather than
+from a saved maze-design file:
+
+```bash
+# Use the detected blue ball as START and click the GOAL.
+python3 tools/plan_camera_maze.py --click
+
+# Or supply both endpoints in board millimetres.
+python3 tools/plan_camera_maze.py \
+  --start-mm 30 200 --goal-mm 220 25 --no-window
+```
+
+The mapper aligns 20 frames through the four AprilTags, rectifies the playing
+surface at 2 pixels/mm, takes a temporal median, and segments yellow walls and
+circular black holes. It plans on a 1 mm grid after inflating every obstacle by
+the 5.5 mm ball radius plus a 0.5 mm safety margin. Clearance-weighted A* and
+line-of-sight pruning produce 5 mm-spaced training waypoints. Each run writes
+the top-down image, masks, route overlay, and metric `map.json` under
+`artifacts/camera_maze/<timestamp>/`. Use `--auto-endpoints` only as a mapping
+smoke test; training should specify the intended start/goal or click them.
+
+Run continuous real-hardware training from an empty replay:
+
+```bash
+python3 tools/run_real_rl.py \
+  --execute \
+  --continuous-training \
+  --fresh-replay \
+  --policy explore
+```
+
+`--execute` opens the servo bus but does not move it. Wait for green health and
+press Space once to authorize the first episode. `q`/Escape always levels the
+board, releases torque, saves replay, and stops. The controller then operates
+without a key press between ordinary episodes:
+
+- fresh data uses smooth random targets over the full ±4° envelope;
+- commands are independently clipped to ±4° and slew-limited to 0.5° per 5 Hz
+  control step;
+- the first dynamics model needs at least 300 total transitions and 120 with
+  measured motion;
+- dynamics bootstrap batches are balanced 50/50 between moving and stationary
+  transitions so static samples cannot overwhelm the command response;
+- after a model is available, four CEM episodes alternate with one random
+  exploration episode;
+- a CEM episode stationary for 3 s changes to `RECOVERY_EXPLORE` for the rest
+  of that episode, without prescribing a hard-coded breakaway angle;
+- every additional 100 transitions schedules another 50-epoch background
+  update and activates it only at an episode boundary.
+
+To resume, provide both the saved replay and latest completed checkpoint;
+never select an update whose checkpoint was interrupted:
+
+```bash
+python3 tools/run_real_rl.py \
+  --execute --continuous-training \
+  --replay artifacts/rl/runs/<run>/replay_after_run.npz \
+  --checkpoint artifacts/rl/runs/<run>/online_models/update_NNN/dynamics.pt \
+  --policy cem
+```
+
+The live phases are operational state:
+
+| Phase | Meaning |
+| --- | --- |
+| `EXPLORE` | scheduled full-range random data collection |
+| `RL_EPISODE` | CEM is planning through the learned ensemble |
+| `RECOVERY_EXPLORE` | CEM stayed stationary for 3 s; random recovery took over |
+| `CONFIRMING_DROP` | detection is stale; the board is level while absence is debounced |
+| `ARMED_FOR_RELOAD` | a real drop is confirmed; calibrated backward tilt is held |
+| `FIXED_BRAKING` | the reappearing marble is being slowed |
+| `RESET_SETTLING` | level board and speed below 12 mm/s are being confirmed |
+| `TRAINING_WAIT` | reset is complete but an atomic model update is finishing |
+
+Judge learning across episodes using maximum route progress minus episode-start
+progress, cross-track error, return, goal count, and the fraction of CEM
+episodes needing recovery. Validation loss alone is not proof that the physical
+controller improved.
 
 Select a camera explicitly or run without a GUI:
 
@@ -152,7 +287,9 @@ python3 -m pytest -q
 ### Board angle
 
 1. Detect known AprilTag IDs in grayscale with OpenCV ArUco.
-2. Refine corners with `CORNER_REFINE_CONTOUR`, selected from a live benchmark.
+2. Acquire/recover tags on the native 1920 x 1200 frame with
+   `CORNER_REFINE_APRILTAG`, then track them in small native-resolution ROIs;
+   perform a periodic full scan every 15 frames.
 3. Undistort tag pixels with the calibrated Kannala-Brandt camera model.
 4. Match pixels to each tag's known board-frame corners.
 5. Solve the board-to-camera transform with iterative `solvePnP`.
@@ -169,7 +306,10 @@ python3 -m pytest -q
 4. Clean small mask noise and score contour candidates by strict-blue coverage,
    circularity, and expected projected radius.
 5. Use Hough-circle edge recovery when a marble touching a rail or tool merges
-   into a larger blue component.
+   into a larger blue component. When colour already identifies the marble,
+   refine the circle only in a small local crop rather than scanning the board;
+   while no colour anchor exists, throttle expensive board-wide recovery to
+   every fifth frame.
 6. Prefer candidates near the previous valid position and reject impossible
    frame-to-frame jumps.
 7. Convert the chosen distorted pixel to a calibrated ray and intersect it with
@@ -229,11 +369,20 @@ firmware/esp32_imu/            ESP32 sketch streaming BNO086 tilt
 tag_vision/core/board_geometry.py
 tag_vision/core/board_pose.py
 tag_vision/core/ball_detection.py
+tag_vision/core/angle_fusion.py complementary camera + IMU angle estimator
 tag_vision/hardware/sts3215.py FEETECH bus driver
 tag_vision/hardware/motion.py  load-guarded point-to-point moves
 tag_vision/hardware/imu.py     BNO086 frame reader
 tag_vision/control/tilt.py     board angle -> counts, backlash fed forward
+tag_vision/planning/           camera maze map + clearance-aware route planner
+tag_vision/rl/                 replay, task, safety, dynamics, CEM, exploration
 tools/manual_tilt_angle.py     standalone live viewer
+tools/camera_imu_check.py      settled camera-vs-IMU angle cross-check
+tools/keyboard_motor_compare.py keyboard motor control + angle comparison log
+tools/plan_camera_maze.py      live metric map and route generation
+tools/run_real_rl.py           continuous real-hardware MBRL runner
+tools/train_rl_dynamics.py     offline/background ensemble trainer
+tools/rl_preflight.py          GPU, geometry, calibration, and port checks
 tools/record_ball_dataset.py   standalone data recorder
 tools/imu_monitor.py           IMU bring-up and level-zero capture
 tools/sysid_actuator.py        actuator system identification
@@ -260,11 +409,11 @@ test/                          synthetic geometry, pose, detector, IMU, fit test
   validation milestone.
 - There is no fixed-frame tag. Moving the camera invalidates the saved level
   reference and requires pressing `z` again.
-- **The IMU has never been cross-checked against an independent sensor.** Every
-  board-angle number -- gains, backlash, latency -- comes from it alone. Its
-  internal consistency is good (0.013° drift over 6 minutes, clean axis
-  separation, gains reproducing to 0.3%), but the camera cross-check remains the
-  one validation not yet run.
+- The 2026-08-10 camera cross-check covered commanded ±4° on both axes. At the
+  four endpoints camera-vs-IMU RMSE was 0.145° alpha and 0.109° beta. The
+  independent sensors therefore agree well enough for complementary fusion,
+  but both also exposed direction-dependent mechanical lost motion that the
+  current single linear motor mapping cannot remove.
 - **The calibration is valid over the range it was swept** (±1200 counts,
   roughly ±5.5°) and must not be extrapolated past it. Within that range a
   straight line holds well -- 12° of span at under 2% residual -- so the
@@ -297,6 +446,23 @@ test/                          synthetic geometry, pose, detector, IMU, fit test
   the port yielded 1298 frames' worth of bytes when the device had sent 1000.
   The reader deduplicates on `(seq, esp_micros)`; telemetry and reflashing stay
   at 115200.
+- The See3CAM negotiates 1920×1200 MJPEG at 60 FPS through direct V4L2, but the
+  sequential vision pipeline processes roughly 16–19 FPS while doing pose,
+  ball, route, viewer, and occasional CEM work. This is sufficient for the
+  current 5 Hz controller. Camera acquisition FPS is not replay frequency.
+- `--tag-detection calibrated` is an experimental A/B option that runs AprilTag
+  detection on the resized 1280×800 frame. A live 2026-08-10 test improved
+  processing from 22.7 to 26.0 FPS but produced 0 accepted poses at the 4 px
+  reprojection gate in that view; production remains native 1920×1200 tag
+  detection. The camera's native 1280×720 mode has a different aspect ratio and
+  requires a separate intrinsic calibration, level zero, maze map, and caliper
+  validation.
+- Early online models trained from mostly stationary replay falsely predicted
+  motion at zero command and selected small CEM actions. First activation is
+  now gated on 120 moving transitions, training bootstraps are balanced,
+  periodic exploration remains active, and sustained stationary CEM control
+  falls back to random recovery. Physical episode progress remains the
+  acceptance metric.
 
 See [the project status](docs/PROJECT_STATUS.md) for detailed measurements and
 the remaining validation plan.

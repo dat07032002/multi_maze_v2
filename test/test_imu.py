@@ -366,6 +366,18 @@ class TestZeroing(unittest.TestCase):
         self.assertEqual(count, 3)
         self.assertTrue(np.allclose(captured, rotation, atol=1e-3))
 
+    def test_mount_rotation_maps_sensor_axes_into_board_axes(self):
+        """A 180-degree Y mount flips alpha but preserves beta."""
+        board = rotation_from_angles(math.radians(2.0), math.radians(-1.0))
+        mount = np.diag([-1.0, 1.0, -1.0])
+        sensor = mount.T @ board @ mount
+        with stream(sample_frame(1, rotation_to_quat(sensor))) as imu:
+            imu.mount_rotation = mount
+            sample = imu.read_sample(timeout=0.5)
+            alpha, beta = imu.angles(sample)
+        self.assertAlmostEqual(math.degrees(alpha), 2.0, delta=0.01)
+        self.assertAlmostEqual(math.degrees(beta), -1.0, delta=0.01)
+
 
 if __name__ == "__main__":
     unittest.main()

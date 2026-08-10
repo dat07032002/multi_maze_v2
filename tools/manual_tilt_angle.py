@@ -164,9 +164,12 @@ class ManualTiltAngle:
         )
         return True
 
-    def process(self, frame: np.ndarray) -> bool:
+    def process(
+        self, frame: np.ndarray, detection_gray: np.ndarray | None = None
+    ) -> bool:
         """Process one BGR frame. Return False when the user asks to quit."""
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = (detection_gray if detection_gray is not None
+                else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
         self.total_frames += 1
         result = self.estimator.estimate(gray)
         ball = None
@@ -237,7 +240,9 @@ class ManualTiltAngle:
             # Detection stays on the original calibrated camera image. Only
             # the viewer and all of its overlays are mapped to rectified pixels.
             display = self.estimator.undistort_frame(frame)
-            found = self.estimator.detect(gray)
+            # estimate() already detected the tags. Reusing those corners
+            # avoids a second native-resolution detector pass per video frame.
+            found = self.estimator.last_found
             for tag_id, points in found.items():
                 display_points = np.rint(
                     self.estimator.undistort(points)
@@ -385,11 +390,17 @@ def main() -> None:
                 print("\nCamera stopped returning frames.")
                 break
             if resize_frames:
+                # Preserve native pixels for AprilTag corner refinement. The
+                # estimator scales detected corners into calibrated 1280x800
+                # coordinates before PnP; ball processing stays at 1280x800.
+                detection_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 frame = cv2.resize(
                     frame, (expected_width, expected_height),
                     interpolation=cv2.INTER_AREA,
                 )
-            if not app.process(frame):
+            else:
+                detection_gray = None
+            if not app.process(frame, detection_gray=detection_gray):
                 break
     except KeyboardInterrupt:
         pass

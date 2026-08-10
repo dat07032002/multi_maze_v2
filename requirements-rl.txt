@@ -1,0 +1,3 @@
+# Install only after tools/rl_preflight.py reports a healthy NVIDIA driver.
+# Select the CUDA wheel using the official PyTorch installer for this machine.
+torch>=2.2

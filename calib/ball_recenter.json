@@ -1,0 +1,9 @@
+{
+  "version": "tag_ball_recenter_v1",
+  "source_run": "artifacts/ball_control/20260810_140952",
+  "purpose": "provisional direction map for continuous sysid recentering only",
+  "acceleration_per_tilt": [
+    [-37.2, 70.8],
+    [43.6, 54.2]
+  ]
+}

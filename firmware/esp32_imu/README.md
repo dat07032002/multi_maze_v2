@@ -10,17 +10,21 @@ the wire format is defined here and the two must change together.
 | --- | --- | --- |
 | Red | 3.3 V | 3V3 |
 | Black | GND | GND |
-| Blue | SDA | GPIO16 |
-| Yellow | SCL | GPIO17 |
+| Blue | SDA | A4 / SDA |
+| Yellow | SCL | A5 / SCL |
 
-The board on this rig is an **ESP32-D0WD-V3 rev v3.1**, MAC `28:05:a5:33:26:78`,
-on a CP2102 bridge at `/dev/ttyUSB1`. The FEETECH servo bus is the CH340 at
-`/dev/ttyUSB0` — never point a flashing tool at it.
+The IMU now uses a separate **Arduino Nano ESP32** so the original ESP32 can run
+the marble reload firmware at the same time. The FEETECH servo bus is the CH340
+at `/dev/ttyUSB0` — never point a flashing tool at it.
 
-> **GPIO16/17 are the PSRAM pins on WROVER modules.** This part reports no
-> embedded PSRAM, but external PSRAM would not appear in the eFuse feature list,
-> so the firmware reports an I2C failure rather than assuming. If the sensor is
-> never found, move to GPIO21/22 and change `PIN_SDA`/`PIN_SCL`.
+The Nano enumerates persistently as
+`/dev/serial/by-id/usb-Arduino_Nano_ESP32_206EF1320C94-if01`. Host tools resolve
+the `Arduino_Nano_ESP32` identity automatically instead of assuming a tty
+number.
+
+The firmware uses the board core's `SDA` and `SCL` names rather than raw ESP32
+GPIO numbers. This keeps A4/A5 correct under either Nano ESP32 pin-numbering
+mode.
 
 ## Build
 

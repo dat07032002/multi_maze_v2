@@ -140,7 +140,11 @@ def render_board(estimator, geometry, alpha, beta, distance_m=0.32):
         pts = projected.reshape(-1, 2)
 
         # Warp the tag bitmap onto its projected quad.
-        marker = cv2.aruco.generateImageMarker(estimator.dictionary, tag_id, 80)
+        if hasattr(cv2.aruco, "generateImageMarker"):
+            marker = cv2.aruco.generateImageMarker(
+                estimator.dictionary, tag_id, 80)
+        else:
+            marker = cv2.aruco.drawMarker(estimator.dictionary, tag_id, 80)
         source = np.array([[0, 0], [79, 0], [79, 79], [0, 79]], np.float32)
         # marker row 0 is the tag top -> matches corner order TL,TR,BR,BL
         homography = cv2.getPerspectiveTransform(source, pts.astype(np.float32))
@@ -230,6 +234,24 @@ class SyntheticPoseTest(unittest.TestCase):
         frame = np.zeros((height, width, 3), dtype=np.uint8)
         rectified = self.estimator.undistort_frame(frame)
         self.assertEqual(rectified.shape, frame.shape)
+
+    def test_pose_detection_accepts_native_resolution_same_aspect(self):
+        image, _ = render_board(
+            self.estimator, self.geometry,
+            math.radians(2.0), math.radians(-1.0),
+        )
+        width, height = self.estimator.image_size
+        native = cv2.resize(
+            image, (width * 3 // 2, height * 3 // 2),
+            # Preserve the synthetic marker's binary cells. Real native
+            # camera images contain optical antialiasing; cubic resampling of
+            # this already-rasterised test target invents grey cell edges that
+            # are not part of the resolution-scaling contract under test.
+            interpolation=cv2.INTER_NEAREST,
+        )
+        result = self.estimator.estimate(native)
+        self.assertIsNotNone(result)
+        self.assertEqual(set(result.tag_ids), set(self.geometry.ids))
 
 
 if __name__ == "__main__":

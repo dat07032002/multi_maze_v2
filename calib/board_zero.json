@@ -1,22 +1,22 @@
 {
   "zero_rotation": [
     [
-      0.9989424669309159,
-      -0.015075359153486678,
-      -0.043435944888656874
+      0.99890995008663,
+      -0.02402130210406361,
+      -0.04002360132661742
     ],
     [
-      -0.014064832598963573,
-      -0.9996254309275457,
-      0.023477187371588437
+      -0.023304932988831423,
+      -0.9995614443381855,
+      0.01827016942850384
     ],
     [
-      -0.04377360215860937,
-      -0.02284144017593709,
-      -0.9987803263805053
+      -0.040444922008983995,
+      -0.017317506685012512,
+      -0.999031687308216
     ]
   ],
-  "calibration": "/home/dat/Desktop/tag_vision/calib/camera_calib.json",
-  "geometry": "/home/dat/Desktop/tag_vision/calib/board_tags.json",
+  "calibration": "calib/camera_calib.json",
+  "geometry": "calib/board_tags.json",
   "note": "Plate rotation treated as level. Only valid while the camera does not move; re-zero after any disturbance."
 }

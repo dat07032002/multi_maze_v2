@@ -129,6 +129,26 @@ class BlueBallDetectorTest(unittest.TestCase):
         self.assertIsNone(
             self.detector.pixel_to_board_xy(np.array([5.0, 5.0]), self.pose))
 
+    def test_ball_at_outer_rail_keeps_geometric_centre(self):
+        """The z=radius silhouette may extend beyond the z=0 board polygon."""
+        expected = np.array([
+            0.58 * self.geometry.board_width_m,
+            self.geometry.board_height_m - self.detector.radius_m,
+        ])
+        width, height = self.estimator.image_size
+        frame = np.full((height, width, 3), 190, dtype=np.uint8)
+        pixel = self.detector._project(
+            [[expected[0], expected[1], self.detector.radius_m]], self.pose)[0]
+        radius_px = self.detector.expected_radius_px(expected, self.pose)
+        cv2.circle(
+            frame, tuple(np.rint(pixel).astype(int)), int(round(radius_px)),
+            (170, 70, 5), -1, lineType=cv2.LINE_AA,
+        )
+
+        result = self.detector.detect(frame, self.pose)
+        self.assertIsNotNone(result)
+        np.testing.assert_allclose(result.board_xy_m, expected, atol=0.002)
+
 
 if __name__ == "__main__":
     unittest.main()

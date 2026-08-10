@@ -1,29 +1,46 @@
 {
   "zero_rotation": [
     [
-      0.9999375124511443,
-      0.00973818771294461,
-      -0.0054898900795151955
+      -0.9998791967237313,
+      -0.007164615575229724,
+      -0.01379348551908069
     ],
     [
-      -0.009546297031723388,
-      0.9993776609871816,
-      0.033958193897377816
+      -0.0069425597089757055,
+      0.9998466097569524,
+      -0.016079733275640218
     ],
     [
-      0.005817164773307864,
-      -0.03390366381170704,
-      0.9994081759592238
+      0.013906574840456626,
+      -0.015982028694367878,
+      -0.9997755657821503
     ]
   ],
   "source": "bno086_game_rotation_vector",
-  "port": "/dev/ttyUSB0",
+  "port": "/dev/ttyUSB1",
+  "mount_rotation_sensor_to_board": [
+    [
+      -1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      -1.0
+    ]
+  ],
   "note": "Board rotation treated as level, captured in place while the board was physically level with the IMU mounted on it. Unlike the camera zero this does not depend on the camera, but it does depend on the IMU not having been re-mounted. Re-capture after any disturbance to the plate or the sensor.",
-  "samples_averaged": 1000,
+  "captured_with": "tools/camera_imu_check.py",
+  "camera_samples_averaged": 30,
+  "samples_averaged": 150,
   "servo_counts_at_zero": {
-    "1": 2129,
-    "2": 2102
-  },
-  "torque_enabled": false,
-  "capture_seconds": 5.0
+    "1": 2173,
+    "2": 2013
+  }
 }

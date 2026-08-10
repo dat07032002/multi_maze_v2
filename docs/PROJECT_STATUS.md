@@ -1,17 +1,17 @@
-# Vision project status
+# Multi Maze V2 project status
 
-Last updated: 2026-08-06
+Last updated: 2026-08-10
 
-> **Scope note.** This document covers the vision work only, and parts of it
-> predate the 2026-08-06 rescale to a 256 x 226 mm board. Numbers measured on
-> the 259 x 229 mm board (reprojection, angle noise, detection rates) were not
-> re-taken and should be treated as indicative. For maze design see
+> **Scope note.** Early sections began as a vision log and parts predate the
+> 2026-08-06 rescale to a 256 x 226 mm board. Later sections cover the complete
+> physical stack. Numbers measured on the 259 x 229 mm board (reprojection,
+> angle noise, detection rates) were not re-taken and remain indicative. See
 > [`../maze_design/README.md`](../maze_design/README.md); for the servo stack
 > see the repository README.
 
 ## Scope
 
-The current milestone is reliable state estimation for a manually tilted maze
+The initial milestone was reliable state estimation for a manually tilted maze
 board:
 
 ```text
@@ -22,9 +22,10 @@ camera frame
   -> metric marble centre (x, y)
 ```
 
-Maze design, reinforcement-learning policy design, training, and deployment are
-later phases. The perception output deliberately follows the servo contract's
-coordinate conventions so it can feed those phases without changing them.
+That perception contract now feeds camera-derived maze planning, fused motor
+control, automatic physical reload, and continuous real model-based RL. The
+coordinate conventions were retained throughout, so recorded state remains
+compatible across those layers.
 
 As of 2026-08-06 a second state-estimation path exists: a BNO086 IMU on an
 ESP32, streaming board tilt at 200 Hz. It is not a replacement for the camera --
@@ -81,21 +82,66 @@ not an absolute gravity reference.
 
   | ID | Location | Rotation |
   | --- | --- | ---: |
-  | 0 | top-left | 0° |
-  | 1 | bottom-right | -90° |
-  | 2 | top-right | 0° |
-  | 3 | bottom-left | 180° |
+  | 3 | top-left | +90° |
+  | 1 | top-right | 180° |
+  | 2 | bottom-left | +90° |
+  | 0 | bottom-right | -90° |
 
 - Added geometry validation, known-ID filtering, fisheye point undistortion,
   iterative PnP, reprojection RMS, simulator-compatible angle extraction, and
   saved zero rotation.
-- Benchmarked corner refinement on the live rig. `CORNER_REFINE_CONTOUR` gave
-  approximately 1.84 px median reprojection and 0.016°/0.006° static alpha/beta
-  noise. `SUBPIX` gave about 2.38 px and 0.09°/0.07°; AprilTag refinement did
-  not provide complete four-tag poses on this setup.
+- The original live-rig benchmark selected `CORNER_REFINE_CONTOUR` at about
+  1.84 px median reprojection and 0.016°/0.006° static alpha/beta noise. That
+  result was superseded after the installed tags changed; see the 2026-08-10
+  re-verification below.
 - Added a standalone camera viewer so missing ROS (`rclpy`) no longer blocks
   angle measurement.
 - Added full-frame undistortion and a board boundary/origin/+X/+Y overlay.
+- Re-verified the installed ID/rotation map on 2026-08-10 and switched corner
+  refinement to `APRILTAG`: 76% complete four-tag poses versus 3% for
+  `CONTOUR`, 1.92 px median reprojection, and about 0.007° static noise.
+- Added `tools/camera_imu_check.py` for joint camera/IMU zeroing, settled-pose
+  error statistics, and dropout-tolerant complementary fusion. The physical
+  commanded ±4° cross-check completed on 2026-08-10: endpoint camera-vs-IMU
+  RMSE was 0.145° alpha and 0.109° beta, with 98.92% endpoint tag-pose uptime.
+
+### Camera + IMU fusion, 2026-08-10
+
+`tag_vision/core/angle_fusion.py` integrates each unique BNO086 angle increment
+once, then applies valid AprilTag poses as a slow absolute correction (0.5 s
+default time constant). Per-axis camera residuals above 2° are rejected. The
+fused estimate remains live through tag recovery frames and is logged by
+`tools/keyboard_motor_compare.py` as `fused_alpha_deg` and `fused_beta_deg`.
+
+The same test exposed why motor recalibration must be directional. Returning
+the encoder to the captured zero count after beta −4° left the physical plate
+at camera −1.081° / IMU −0.999°. A single centre plus counts/radian gain cannot
+represent that state. The next calibration must capture fresh level counts,
+sweep each servo upward and downward across the operating range, and fit the
+two branches plus reversal lost motion before validating repeated zero returns.
+
+That directional calibration was subsequently measured and validated. The
+piecewise inverse is stored in `calib/directional_motor.json`; the complete
+source data remains in `artifacts/keyboard_compare/20260810_121136`. Against
+the old linear map, mean primary-axis error at the tested ±4° endpoints fell
+from about 0.49° to 0.10°. The final return-to-zero error fell from about 1.23°
+vector magnitude to 0.12°. Remaining error is dominated by cross-axis coupling
+(up to about 0.35° during the alpha sweep), not camera/IMU noise.
+
+### Settled fused trim, 2026-08-10
+
+`tag_vision/control/fused_trim.py` now closes that remaining static error after
+the directional feedforward move. It waits for a settled fused measurement,
+maps the two-axis error through the inverse measured 2×2 Jacobian, holds an axis
+that is already within tolerance, caps a correction at 80 counts, and stops
+after six attempts. This is a bounded setpoint trim, not a continuously active
+PID, so it cannot integrate indefinitely inside the backlash band.
+
+Hardware validation across +4/0/−4/0 on both axes produced worst primary-axis
+error 0.080° and worst cross-axis error 0.056° at the four endpoints. Final zero
+was alpha −0.038° / beta +0.080°. The production tolerance is 0.10°, below the
+rig's measured 0.19° reliable command resolution. The strict 0.08° validation
+run is in `artifacts/keyboard_compare/20260810_122915`.
 
 ### Blue-marble detection
 
@@ -113,6 +159,23 @@ not an absolute gravity reference.
   handling tool.
 - Added a recorder that saves frames, masks, per-frame measurements, manifests,
   and summaries.
+
+### Camera-derived maze routes, 2026-08-10
+
+`tools/plan_camera_maze.py` now treats the maze under the camera as the source
+of truth. It uses the four-tag pose to rectify multiple frames into a 2 px/mm
+top-down image, segments yellow rails and physically sized circular black
+holes, then converts them to a 1 mm occupancy grid. Obstacles and the board
+edge are inflated by the ball radius plus a configurable 0.5 mm safety margin before
+clearance-weighted A* planning, line-of-sight pruning, and 5 mm waypoint
+resampling.
+
+The first live validation accepted 20/20 four-tag poses at 1.96 px median
+reprojection, found all 13 visible holes, and generated a 275 mm route through
+the current maze. The saved overlay and metric JSON are in
+`artifacts/camera_maze/live_validation/`. This validates mapping and geometric
+planning; following those waypoints with closed-loop ball control remains the
+next layer.
 
 ### Actuator system identification
 
@@ -365,14 +428,12 @@ test pinning all three.
 
 #### Remaining
 
-1. **Camera cross-check.** The only independent validation of the IMU, and the
-   one item from the original plan never run — the See3CAM was unplugged.
-   Everything above rests on a single sensor whose internal consistency is good
-   (0.013° drift, clean axis separation, gains reproducing to 0.3%) but which
-   has never been checked against another instrument.
-2. Nonlinear `AxisCalibration`, if ±1.4° proves too narrow for the maze.
-3. Feedforward + reversal-compensation control layer, mirrored in the simulator.
-4. MuJoCo model using the table above.
+1. Fit position-dependent pitch backlash if dynamic validation shows the flat
+   correction is inadequate near the operating extremes.
+2. Fit nonlinear `AxisCalibration` if the current measured ±4° envelope needs
+   more precision than the direction-dependent lookup provides.
+3. Continue physical learned-control validation; the project intentionally
+   prioritizes real data over the previously proposed MuJoCo path.
 
 ### Verification
 
@@ -390,7 +451,8 @@ test pinning all three.
   90% threshold was computed against a truncated delta and a confidently wrong,
   too-fast rise time was returned. `_step_metrics` now checks that the tail has
   settled and reports an error instead.
-- Current result: **66 tests pass** (21 vision, 18 IMU, 27 sysid).
+- Current result: **154 tests pass** across vision, IMU, actuator, planning,
+  reset, replay, model, and RL-control components.
 - A dry render on a real recorded frame placed the undistorted origin at about
   `(288.7, 691.7)` px, with finite +X/+Y endpoints inside the 1280 x 800 view.
 
@@ -467,8 +529,8 @@ directory structure.
    too large for control.
 8. Add a fixed-frame tag or inertial/gravity reference if the camera must move
    without re-zeroing.
-9. Begin maze representation and policy design only after the perception
-   acceptance criteria are met.
+9. Continue measuring perception acceptance during physical policy training;
+   maze representation and policy design are now implemented.
 
 ## Suggested perception acceptance criteria
 
@@ -482,3 +544,116 @@ Define these numerically before policy integration. A practical first target is:
 - processing latency comfortably below the future control-loop period;
 - automatic `not visible` output during genuine occlusion instead of a guessed
   coordinate.
+
+## 2026-08-10: camera maze planning and real model-based RL
+
+The project now runs closed-loop learning on the physical maze. This work does
+not use a simulator or sim-to-real transfer.
+
+### Metric camera maze planning
+
+`tools/plan_camera_maze.py` collects 20 four-tag poses, rectifies the board to
+2 px/mm, forms a temporal median, detects yellow walls and circular black holes,
+and plans in a 1 mm occupancy grid. Obstacles are inflated by the 5.5 mm marble
+radius plus a configurable safety margin. Clearance-weighted A* is simplified
+by line of sight and resampled at 5 mm. The accepted map under
+`artifacts/camera_maze/20260810_125246` has a 623 mm route, 127 points, 13
+detected holes, 62.0% occupied area after inflation, and 1.0 mm minimum extra
+clearance. Generated artifacts remain ignored by Git.
+
+### Camera and IMU fusion
+
+The BNO086 moved to a separate Nano ESP32 so reload firmware and 200 Hz inertial
+telemetry can operate concurrently. `CameraImuFusion` uses the IMU for fast
+increments and valid four-tag camera poses for absolute correction. The level
+references in `calib/board_zero.json` and `calib/imu_zero.json` were captured
+together. The physical ±4° cross-check measured endpoint camera-vs-IMU RMSE of
+0.145° alpha and 0.109° beta.
+
+### Reset and reload behavior
+
+The repeatable reload entry is handled deterministically rather than learned.
+`calib/reload_brake.json` holds the measured backward tilt `[-0.77°, +1.35°]`.
+After confirmed absence the controller holds that tilt, brakes the reappearing
+marble, levels, and requires speed below 12 mm/s for 0.5 s before starting the
+next episode. A detection gap first enters the cancellable
+`CONFIRMING_DROP` state; reacquisition resumes the same episode. This prevents
+a false loss from becoming a persistent `WAITING_FOR_DROP`. Brake timeout
+levels safely and can recover when the marble subsequently stops or disappears
+again.
+
+### Real dynamics learning and control
+
+The observation has 30 physical features: position, velocity, fused angles and
+rates, previous action, route progress/cross-track/target/tangent, clearance,
+stationary state, and 12 obstacle rays. Actions are two target angles. The
+independent health shield enforces ±4°, 0.5° slew per 5 Hz step, fresh camera
+and ball data, fusion agreement, servo communication, and load limits.
+
+The continuous runner uses this lifecycle:
+
+1. Start a fresh bounded replay and collect temporally coherent random targets,
+   each held for 0.8 s.
+2. Require at least 300 total and 120 moving transitions before first model
+   activation.
+3. Train five probabilistic PyTorch dynamics networks on the RTX 4070. Each
+   bootstrap is balanced between moving and stationary transitions.
+4. Atomically load completed checkpoints only between episodes and plan with
+   CUDA CEM: 256 candidates, 10 steps, three iterations.
+5. Run four learned-model episodes followed by one random exploration episode.
+   A learned episode stationary for 3 s becomes `RECOVERY_EXPLORE`.
+6. Snapshot and retrain every 100 additional transitions. Training runs in a
+   child process during reload; `TRAINING_WAIT` keeps the board level if the
+   reset finishes first.
+
+Replay records the command actually executed after safety limiting, not the
+unreachable proposal. Episode timeout is 60 s and continuous mode restarts at
+the current detected position. Confirmed ball loss saves replay immediately;
+normal exit also levels, releases torque, terminates background training, and
+saves atomically.
+
+The first online design activated after only 303 transitions. A representative
+replay contained 464 stationary versus 68 moving transitions, and its model
+predicted about 9 mm of forward progress over ten steps even at zero command.
+CEM consequently selected median commands near 1.1° while all 909 observed CEM
+samples remained stationary. This motivated the moving-data activation gate,
+balanced bootstrap, reduction of the CEM effort coefficient from 0.008 to
+0.0005, periodic random episodes, and stationary recovery. These are safeguards
+against a deficient learned model, not a hard-coded breakaway angle.
+
+### Camera throughput and resolution experiment
+
+OpenCV now opens the See3CAM directly through V4L2 because the default
+GStreamer backend rejected valid MJPEG negotiation. The verified device mode is
+1920×1200 MJPEG at 60 FPS with a one-frame buffer. The sequential full pipeline
+processes approximately 16–19 FPS. Ball-absent processing was accelerated 1.42×
+by running board-wide Hough recovery every fifth frame; ordinary colour
+reacquisition remains per-frame. Circle support is evaluated in local crops and
+the maze distance transform is cached.
+
+The experimental `--tag-detection calibrated` mode detects tags after uniform
+resize to the existing 1280×800 calibration space. In a no-motor live A/B it
+reduced median pose work from 3.22 to 2.08 ms and raised full-run processing
+from 22.7 to 26.0 FPS, but accepted-pose rate fell from 33% in the already poor
+current view to 0% at the 4 px reprojection gate. It is retained for diagnostics
+but must not be used for execution. Native 1920×1200 detection remains the
+production default. Native 1280×720 capture is 16:9 and requires a separate
+intrinsic fit, camera zero, maze map, and coordinate validation; stretching it
+to 1280×800 would invalidate geometry.
+
+### Verification and current limitations
+
+- `python3 -m pytest -q`: **154 passed**.
+- Background trainer snapshot, checkpoint load, and CUDA inference handoff were
+  exercised without motors.
+- Replay and generated models live under ignored `artifacts/rl/runs/<stamp>`;
+  they are deliberately not versioned.
+- Current physical runs have not yet demonstrated a complete learned traversal.
+  Progress must be evaluated as per-episode route gain, return, cross-track
+  error, goal count, and recovery frequency. Neural validation RMSE alone is
+  not an acceptance test.
+- Do not mix 5 Hz and a future 8–10 Hz controller in one replay: the current
+  observation does not include timestep, so transition duration is implicit.
+- The current camera view must recover >80% four-tag pose availability before
+  more hardware training; the last resolution A/B view was below this bar even
+  at native resolution.

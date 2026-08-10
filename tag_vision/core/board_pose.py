@@ -140,22 +140,46 @@ class BoardPoseEstimator:
         self.min_tags = int(min_tags)
         self.dictionary = cv2.aruco.getPredefinedDictionary(
             APRILTAG_FAMILIES[family])
-        self.params = self._detector_params()
-        # OpenCV 4.7 moved detection onto this object and it takes a *copy* of
-        # the parameters at construction, so mutating self.params afterwards
-        # has no effect. Rebuild the detector if the refinement method ever
-        # needs to change at runtime.
-        self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.params)
+        self.params = self._detector_params(
+            cv2.aruco.CORNER_REFINE_APRILTAG)
+        self.roi_params = self._detector_params(
+            cv2.aruco.CORNER_REFINE_CONTOUR)
+        # APRILTAG refinement is excellent for native full-frame acquisition,
+        # but can take seconds on a stale crop containing no marker. Once a
+        # tag fills a small tracked ROI, CONTOUR is fast and precise; any miss
+        # immediately falls back to the authoritative full-frame detector.
+        # ArucoDetector copies the parameters at construction, so construct a
+        # separate detector for each refinement mode.
+        if hasattr(cv2.aruco, "ArucoDetector"):
+            self.detector = cv2.aruco.ArucoDetector(
+                self.dictionary, self.params)
+            self.roi_detector = cv2.aruco.ArucoDetector(
+                self.dictionary, self.roi_params)
+        else:
+            self.detector = None
+            self.roi_detector = None
         self.zero_rotation: np.ndarray | None = None
+        # Native-resolution tracking: a full-frame scan acquires/reacquires
+        # the tags, then small per-tag crops preserve the same corner detail at
+        # a fraction of the cost. Coordinates stored here are always in the
+        # calibrated image space, independent of capture resolution.
+        self.full_detection_interval = 15
+        self._detection_calls = 0
+        self._tracked_corners: dict[int, np.ndarray] = {}
+        self.last_found: dict[int, np.ndarray] = {}
+        self.last_detection_mode = "none"
 
     @staticmethod
-    def _detector_params():
-        params = cv2.aruco.DetectorParameters()
-        # Re-measured on the installed four-tag board: CONTOUR reduced median
-        # reprojection error from 2.38 to 1.84 px and static angle noise from
-        # 0.09/0.07 to 0.016/0.006 deg at the same detection rate and runtime.
-        # APRILTAG refinement detected no complete poses on this setup.
-        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
+    def _detector_params(refinement_method):
+        if hasattr(cv2.aruco, "DetectorParameters"):
+            params = cv2.aruco.DetectorParameters()
+        else:
+            params = cv2.aruco.DetectorParameters_create()
+        # Re-measured on the installed board after the corner tags were
+        # rearranged (2026-08-10). APRILTAG recovered all four tags in 76% of
+        # live frames versus 3% for CONTOUR, reduced median reprojection error
+        # from 2.25 to 1.92 px, and gave about 0.007 deg static noise per axis.
+        params.cornerRefinementMethod = refinement_method
         return params
 
     # ---- geometry helpers -------------------------------------------------
@@ -200,17 +224,106 @@ class BoardPoseEstimator:
         return projected.reshape(-1, 2)
 
     # ---- main -------------------------------------------------------------
-    def detect(self, gray: np.ndarray):
-        """Return {tag_id: (4,2) corners} for known ids only."""
-        corners, ids, _ = self.detector.detectMarkers(gray)
+    def _detect_full(
+        self, gray: np.ndarray, pixel_scale: np.ndarray
+    ) -> dict[int, np.ndarray]:
+        if self.detector is not None:
+            corners, ids, _ = self.detector.detectMarkers(gray)
+        else:
+            corners, ids, _ = cv2.aruco.detectMarkers(
+                gray, self.dictionary, parameters=self.params)
         found: dict[int, np.ndarray] = {}
         if ids is None:
             return found
         for tag_id, corner in zip(ids.ravel(), corners):
             tag_id = int(tag_id)
-            # Anything not on the board is a false positive by construction.
             if tag_id in self.geometry.tags:
-                found[tag_id] = corner[0].astype(np.float64)
+                found[tag_id] = corner[0].astype(np.float64) * pixel_scale
+        return found
+
+    def _detect_tracked_rois(
+        self, gray: np.ndarray, pixel_scale: np.ndarray
+    ) -> dict[int, np.ndarray]:
+        """Detect each expected tag near its previous native-image position."""
+        inverse_scale = 1.0 / pixel_scale
+        height, width = gray.shape[:2]
+        found: dict[int, np.ndarray] = {}
+        for expected_id in self.geometry.ids:
+            calibrated = self._tracked_corners.get(expected_id)
+            if calibrated is None:
+                continue
+            native = calibrated * inverse_scale
+            low = native.min(axis=0)
+            high = native.max(axis=0)
+            tag_span = max(float(high[0] - low[0]), float(high[1] - low[1]))
+            margin = max(24.0, 1.25 * tag_span)
+            x0 = max(0, int(math.floor(low[0] - margin)))
+            y0 = max(0, int(math.floor(low[1] - margin)))
+            x1 = min(width, int(math.ceil(high[0] + margin)))
+            y1 = min(height, int(math.ceil(high[1] + margin)))
+            if x1 - x0 < 16 or y1 - y0 < 16:
+                continue
+            crop = gray[y0:y1, x0:x1]
+            if self.roi_detector is not None:
+                corners, ids, _ = self.roi_detector.detectMarkers(crop)
+            else:
+                corners, ids, _ = cv2.aruco.detectMarkers(
+                    crop, self.dictionary, parameters=self.roi_params)
+            if ids is None:
+                continue
+            for tag_id, corner in zip(ids.ravel(), corners):
+                if int(tag_id) != expected_id:
+                    continue
+                native_corner = corner[0].astype(np.float64)
+                native_corner += np.array([x0, y0], dtype=np.float64)
+                found[expected_id] = native_corner * pixel_scale
+                break
+        return found
+
+    def detect(self, gray: np.ndarray):
+        """Return known tag corners in calibrated-image pixel coordinates.
+
+        Detection may run on a larger image with the same aspect ratio. Corner
+        refinement benefits substantially from the native 1920x1200 capture,
+        while scaling the resulting pixels back to 1280x800 keeps PnP tied to
+        the calibrated intrinsic matrix.
+        """
+        actual_height, actual_width = gray.shape[:2]
+        expected_width, expected_height = self.image_size
+        if actual_width * expected_height != actual_height * expected_width:
+            raise ValueError(
+                f"detection image {actual_width}x{actual_height} does not "
+                f"match calibration aspect ratio {expected_width}x{expected_height}"
+            )
+        pixel_scale = np.array([
+            expected_width / actual_width,
+            expected_height / actual_height,
+        ], dtype=np.float64)
+        self._detection_calls += 1
+        expected_ids = set(self.geometry.ids)
+        periodic_full = (
+            self._detection_calls % self.full_detection_interval == 0)
+        can_track = set(self._tracked_corners) == expected_ids
+
+        if can_track and not periodic_full:
+            found = self._detect_tracked_rois(gray, pixel_scale)
+            self.last_detection_mode = "roi"
+            if set(found) != expected_ids:
+                # The board may have moved outside a crop. Recover on this same
+                # frame so tracking failure does not create a visible blink.
+                found = self._detect_full(gray, pixel_scale)
+                self.last_detection_mode = "recovery"
+        else:
+            found = self._detect_full(gray, pixel_scale)
+            self.last_detection_mode = "full"
+
+        if set(found) == expected_ids:
+            self._tracked_corners = {
+                tag_id: points.copy() for tag_id, points in found.items()
+            }
+        self.last_found = {
+            tag_id: points.copy() for tag_id, points in found.items()
+        }
         return found
 
     def estimate(self, gray: np.ndarray) -> PoseResult | None:

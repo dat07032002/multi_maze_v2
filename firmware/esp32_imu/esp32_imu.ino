@@ -25,13 +25,15 @@
 // ---- wiring ---------------------------------------------------------------
 // SparkFun Qwiic: red 3V3, black GND, blue SDA, yellow SCL.
 //
-// GPIO16/17 are the PSRAM pins on WROVER modules. The board here reports as
-// ESP32-D0WD-V3 with no embedded PSRAM, so they should be free -- but external
-// PSRAM would not show in the eFuse feature list, so this is verified at
-// runtime rather than assumed. If I2C never comes up, try 21/22.
-static const int PIN_SDA = 16;
-static const int PIN_SCL = 17;
-static const uint32_t I2C_HZ = 400000;
+// Use the board variant's named I2C pins. On Arduino Nano ESP32 these are
+// A4/SDA and A5/SCL. Using SDA/SCL rather than raw ESP32 GPIO numbers also
+// works with either of the Nano core's Arduino-pin or GPIO-pin numbering modes.
+static const int PIN_SDA = SDA;
+static const int PIN_SCL = SCL;
+// BNO086 clock stretching is timing-sensitive on the Nano ESP32's ESP32-S3.
+// Use standard mode for a reliable SH-2 startup; 100 kHz is still ample for
+// the compact 200 Hz game-rotation-vector report.
+static const uint32_t I2C_HZ = 100000;
 
 static const uint32_t SERIAL_BAUD = 115200;
 
@@ -153,23 +155,45 @@ static void recoverBus() {
 // Try to bring the sensor up. Safe to call repeatedly.
 static bool tryBegin() {
   recoverBus();
-  Wire.begin(PIN_SDA, PIN_SCL, I2C_HZ);
+  if (!Wire.begin(PIN_SDA, PIN_SCL, I2C_HZ)) {
+    sendStatus("Wire.begin failed on labeled SDA/SCL pins");
+    return false;
+  }
+  Wire.setTimeOut(50);
   delay(50);
-  if (!(imu.begin(0x4B, Wire) || imu.begin(0x4A, Wire))) return false;
+  uint8_t address = 0;
+  for (uint8_t candidate : {0x4B, 0x4A}) {
+    Wire.beginTransmission(candidate);
+    if (Wire.endTransmission() == 0) {
+      address = candidate;
+      break;
+    }
+  }
+  if (address == 0) {
+    sendStatus("no I2C response at BNO086 address 0x4B or 0x4A");
+    return false;
+  }
+  sendStatus(address == 0x4B ? "I2C ACK at 0x4B; starting BNO086"
+                             : "I2C ACK at 0x4A; starting BNO086");
+  if (!imu.begin(address, Wire)) return false;
   return enableReports();
 }
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
-  delay(200);
+  // Nano ESP32 uses native USB CDC. Give the host monitor time to open so the
+  // one-shot startup diagnostics are not discarded before a reader exists.
+  uint32_t usb_wait_started = millis();
+  while (!Serial && millis() - usb_wait_started < 10000) delay(10);
+  sendStatus("Nano ESP32 IMU firmware started");
 
   // Two addresses exist in the wild: 0x4B is the SparkFun default, 0x4A is the
   // ADR-jumper alternative. tryBegin attempts both after recovering the bus.
   imu_ok = tryBegin();
   sendStatus(imu_ok ? "BNO086 ready: game rotation vector @ 200 Hz"
                     : "BNO08x did not start; will keep retrying. If it never "
-                      "comes up, check 3V3/GND/SDA=16/SCL=17 -- and note a "
-                      "WROVER uses 16/17 for PSRAM, so try 21/22.");
+                      "comes up, check 3V3/GND and the board's labeled "
+                      "SDA/SCL pins.");
 }
 
 void loop() {

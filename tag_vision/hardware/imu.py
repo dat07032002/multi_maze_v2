@@ -38,11 +38,11 @@ TYPE_SAMPLE = 0x01
 TYPE_PONG = 0x02
 TYPE_STATUS = 0x03
 
-# Resolved by USB identity, not by number: the CP2102 (IMU) and CH340 (servo
-# bus) have already swapped ttyUSB numbers once when the rig was reconnected,
-# and opening the wrong one is silent rather than obvious.
+# Resolved by USB identity, not by number. The old CP2102 now runs the marble
+# reload controller; matching the Nano ESP32 explicitly prevents an IMU tool
+# from silently opening that unrelated firmware.
 def find_imu_port() -> str:
-    return find_port(IMU_USB_MARKER, "/dev/ttyUSB1")
+    return find_port(IMU_USB_MARKER, "/dev/ttyACM0")
 
 
 DEFAULT_PORT = None
@@ -134,6 +134,10 @@ class BNO086Stream:
             port, baudrate, timeout=timeout)
         self._buffer = bytearray()
         self.zero_rotation: np.ndarray | None = None
+        # Proper rotation mapping sensor coordinates into board coordinates.
+        # Zeroing removes a fixed attitude offset but cannot remove an axis
+        # rotation: relative_sensor = M.T @ relative_board @ M.
+        self.mount_rotation = np.eye(3, dtype=np.float64)
 
         # Stream health. Surfaced, never smoothed over: a dropped report during
         # a step response is a missing measurement, not a value to interpolate.
@@ -331,9 +335,11 @@ class BNO086Stream:
     def angles(self, sample: ImuSample) -> tuple[float, float]:
         """(alpha, beta) in radians, relative to the captured level zero."""
         rotation = sample.rotation
-        relative = rotation if self.zero_rotation is None else (
+        relative_sensor = rotation if self.zero_rotation is None else (
             self.zero_rotation.T @ rotation)
-        return angles_from_rotation(relative)
+        relative_board = (
+            self.mount_rotation @ relative_sensor @ self.mount_rotation.T)
+        return angles_from_rotation(relative_board)
 
     # ---- zeroing -----------------------------------------------------------
     def set_zero(self, rotation: np.ndarray) -> None:
@@ -379,6 +385,7 @@ class BNO086Stream:
             "zero_rotation": self.zero_rotation.tolist(),
             "source": "bno086_game_rotation_vector",
             "port": self.port,
+            "mount_rotation_sensor_to_board": self.mount_rotation.tolist(),
             "note": (
                 "Board rotation treated as level, captured in place while the "
                 "board was physically level with the IMU mounted on it. Unlike "
@@ -395,3 +402,7 @@ class BNO086Stream:
     def load_zero(self, path: str | Path) -> None:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         self.zero_rotation = np.asarray(data["zero_rotation"], dtype=np.float64)
+        self.mount_rotation = np.asarray(
+            data.get("mount_rotation_sensor_to_board", np.eye(3)),
+            dtype=np.float64,
+        )

@@ -39,13 +39,16 @@ class BlueBallDetector:
         *,
         radius_m: float = 0.0055,
         min_confidence: float = 0.54,
+        global_recovery_interval: int = 5,
     ):
-        if radius_m <= 0:
+        if radius_m <= 0 or global_recovery_interval < 1:
             raise ValueError("ball radius must be positive")
         self.estimator = estimator
         self.geometry = estimator.geometry
         self.radius_m = float(radius_m)
         self.min_confidence = float(min_confidence)
+        self.global_recovery_interval = int(global_recovery_interval)
+        self._detection_calls = 0
         self.last_mask: np.ndarray | None = None
 
     # ---- calibrated geometry -------------------------------------------
@@ -79,6 +82,30 @@ class BlueBallDetector:
         polygon = np.rint(self._project(xyz, pose)).astype(np.int32)
         mask = np.zeros(shape, dtype=np.uint8)
         cv2.fillPoly(mask, [polygon], 255)
+
+        # The polygon is the playing-surface boundary at z=0, but the visible
+        # ball silhouette extends roughly one radius beyond it when the marble
+        # touches an outer rail. Clipping at the surface boundary cuts off half
+        # the colour contour and biases fitEllipse inward. Expand only the
+        # appearance ROI; pixel_to_board_xy still constrains the recovered
+        # centre to the physical board (with one-radius tolerance).
+        sample_xy = np.array([
+            [0.0, 0.0],
+            [width, 0.0],
+            [width, height],
+            [0.0, height],
+            [0.5 * width, 0.5 * height],
+        ])
+        projected_radii = [
+            self.expected_radius_px(point, pose) for point in sample_xy
+        ]
+        silhouette_margin_px = max(
+            2, min(40, int(math.ceil(max(projected_radii))) + 2))
+        diameter = 2 * silhouette_margin_px + 1
+        mask = cv2.dilate(
+            mask,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (diameter, diameter)),
+        )
 
         # Tag borders are black but appear blue under this camera's locked
         # white balance. They are known geometry, so remove their complete
@@ -163,6 +190,7 @@ class BlueBallDetector:
     ) -> BallResult | None:
         if frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError("blue ball detector expects a BGR image")
+        self._detection_calls += 1
 
         board_mask = self.board_mask(frame.shape[:2], pose)
         broad, strict = self.blue_masks(frame)
@@ -234,13 +262,38 @@ class BlueBallDetector:
                 best = result
                 best_selection_score = selection_score
 
+        # Keep the colour result as an identity anchor. A nearby Hough circle
+        # can refine its centre from the physical edge even when highlights
+        # leave only a small, off-centre blue core.
+        colour_anchor = best
+
         # A ball touching a rail, wall, or handling tool can merge into one
         # large colour component and fail the contour-size test above. Recover
         # it from circular edge support, then require that the circle interior
         # is genuinely bright blue. The board crop keeps this affordable.
         nonzero = cv2.findNonZero(board_mask)
-        if nonzero is not None:
-            x0, y0, crop_width, crop_height = cv2.boundingRect(nonzero)
+        run_hough = (colour_anchor is not None
+                     or self._detection_calls % self.global_recovery_interval == 0)
+        if nonzero is not None and run_hough:
+            if colour_anchor is not None:
+                anchor_expected_radius = self.expected_radius_px(
+                    colour_anchor.board_xy_m, pose)
+                half_size = int(math.ceil(max(
+                    30.0,
+                    3.0 * colour_anchor.radius_px,
+                    2.5 * anchor_expected_radius,
+                )))
+                centre_x, centre_y = np.rint(
+                    colour_anchor.pixel_xy).astype(int)
+                x0 = max(0, centre_x - half_size)
+                y0 = max(0, centre_y - half_size)
+                x1 = min(frame.shape[1], centre_x + half_size + 1)
+                y1 = min(frame.shape[0], centre_y + half_size + 1)
+                crop_width, crop_height = x1 - x0, y1 - y0
+            else:
+                # No colour anchor: retain the expensive board-wide fallback
+                # for recovery from a ball merged with another blue object.
+                x0, y0, crop_width, crop_height = cv2.boundingRect(nonzero)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray_crop = cv2.GaussianBlur(
                 gray[y0:y0 + crop_height, x0:x0 + crop_width],
@@ -249,14 +302,14 @@ class BlueBallDetector:
                 gray_crop,
                 cv2.HOUGH_GRADIENT,
                 dp=1.2,
-                minDist=18,
+                minDist=max(12, int(1.5 * (
+                    colour_anchor.radius_px if colour_anchor is not None else 12))),
                 param1=100,
                 param2=16,
                 minRadius=8,
                 maxRadius=25,
             )
             if circles is not None:
-                yy, xx = np.ogrid[:frame.shape[0], :frame.shape[1]]
                 for crop_x, crop_y, radius_px in circles[0]:
                     pixel = np.array(
                         [crop_x + x0, crop_y + y0], dtype=np.float64)
@@ -275,19 +328,51 @@ class BlueBallDetector:
                     size_ratio = float(radius_px) / expected_radius
                     if not 0.55 <= size_ratio <= 2.0:
                         continue
-                    disk = (
-                        (xx - pixel[0]) ** 2 + (yy - pixel[1]) ** 2
-                        <= float(radius_px) ** 2)
+                    anchored = (
+                        colour_anchor is not None
+                        and float(np.linalg.norm(
+                            pixel - colour_anchor.pixel_xy))
+                        <= max(4.0, 0.40 * expected_radius)
+                    )
+                    disk_x0 = max(0, int(math.floor(pixel[0] - radius_px)))
+                    disk_y0 = max(0, int(math.floor(pixel[1] - radius_px)))
+                    disk_x1 = min(frame.shape[1], int(math.ceil(
+                        pixel[0] + radius_px)) + 1)
+                    disk_y1 = min(frame.shape[0], int(math.ceil(
+                        pixel[1] + radius_px)) + 1)
+                    yy, xx = np.ogrid[disk_y0:disk_y1, disk_x0:disk_x1]
+                    disk = ((xx - pixel[0]) ** 2 + (yy - pixel[1]) ** 2
+                            <= float(radius_px) ** 2)
                     disk_pixels = max(1, int(np.count_nonzero(disk)))
-                    broad_fraction = float(np.count_nonzero(broad[disk])) / disk_pixels
-                    strict_fraction = float(np.count_nonzero(strict[disk])) / disk_pixels
-                    if strict_fraction < 0.60 or broad_fraction < 0.68:
+                    broad_crop = broad[disk_y0:disk_y1, disk_x0:disk_x1]
+                    strict_crop = strict[disk_y0:disk_y1, disk_x0:disk_x1]
+                    broad_fraction = float(np.count_nonzero(
+                        broad_crop[disk])) / disk_pixels
+                    strict_fraction = float(np.count_nonzero(
+                        strict_crop[disk])) / disk_pixels
+                    if anchored:
+                        # The colour candidate has already established that
+                        # this is the marble. Its complete circular disk can
+                        # contain white specular highlights and dark shading,
+                        # so it need not be majority strict-blue.
+                        if strict_fraction < 0.12 or broad_fraction < 0.30:
+                            continue
+                    elif strict_fraction < 0.60 or broad_fraction < 0.68:
                         continue
                     size_score = math.exp(-1.4 * abs(math.log(size_ratio)))
-                    confidence = float(
-                        0.60 * strict_fraction
-                        + 0.25 * broad_fraction
-                        + 0.15 * size_score)
+                    if anchored:
+                        blue_support = (
+                            0.55 * min(1.0, strict_fraction / 0.25)
+                            + 0.45 * min(1.0, broad_fraction / 0.45)
+                        )
+                        confidence = float(
+                            0.55 + 0.25 * blue_support
+                            + 0.20 * size_score)
+                    else:
+                        confidence = float(
+                            0.60 * strict_fraction
+                            + 0.25 * broad_fraction
+                            + 0.15 * size_score)
 
                     angles = np.linspace(0.0, 2.0 * math.pi, 32, endpoint=False)
                     contour = np.column_stack((

@@ -155,11 +155,14 @@ def main() -> None:
                         break
                     continue
                 next_sample = now + 1.0 / args.rate
+                detection_gray = None
                 if (frame.shape[1], frame.shape[0]) != (width, height):
+                    detection_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     frame = cv2.resize(
                         frame, (width, height), interpolation=cv2.INTER_AREA)
 
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                gray = (detection_gray if detection_gray is not None
+                        else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
                 pose = estimator.estimate(gray)
                 pose_ok = (
                     pose is not None

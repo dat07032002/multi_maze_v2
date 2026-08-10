@@ -1,22 +1,8 @@
 {
   "roll": {
-    "servo_id": 1,
-    "counts_per_rad": 11776.015622520805,
-    "center_counts": 2215,
-    "sign": 1,
-    "min_counts": 929,
-    "max_counts": 3329,
-    "deadband_counts": 6.426313338505027,
-    "backlash_rad": 0.0005457120255695953,
-    "step_latency_s": 0.18493960251726094,
-    "rise_time_s": 0.2560849189758301,
-    "max_rate_rad_s": 0.12063788738196578,
-    "measured": true
-  },
-  "pitch": {
     "servo_id": 2,
     "counts_per_rad": 11411.740856067181,
-    "center_counts": 2053,
+    "center_counts": 2014,
     "sign": 1,
     "min_counts": 902,
     "max_counts": 3302,
@@ -27,6 +13,21 @@
     "max_rate_rad_s": 0.1430373149468565,
     "measured": true
   },
+  "pitch": {
+    "servo_id": 1,
+    "counts_per_rad": 11776.015622520805,
+    "center_counts": 2092,
+    "sign": -1,
+    "min_counts": 929,
+    "max_counts": 3329,
+    "deadband_counts": 6.426313338505027,
+    "backlash_rad": 0.0005457120255695953,
+    "step_latency_s": 0.18493960251726094,
+    "rise_time_s": 0.2560849189758301,
+    "max_rate_rad_s": 0.12063788738196578,
+    "measured": true
+  },
+  "axis_remap_note": "Live camera verification 2026-08-10 after installed tag-map correction: servo 2 count+ gives board alpha+; servo 1 count+ gives board beta-. Per-servo gains/dynamics retained, logical roll/pitch assignments remapped. Powered level was jointly re-zeroed at servo1=2092, servo2=2014 after backlash conditioning.",
   "max_tilt_rad": 0.06981317007977318,
   "max_pose_age_s": 0.05,
   "servo_config": {
