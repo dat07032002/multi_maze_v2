@@ -138,13 +138,19 @@ class BoardPoseEstimator:
 
         self.geometry = geometry
         self.min_tags = int(min_tags)
-        self.dictionary = cv2.aruco.Dictionary_get(APRILTAG_FAMILIES[family])
+        self.dictionary = cv2.aruco.getPredefinedDictionary(
+            APRILTAG_FAMILIES[family])
         self.params = self._detector_params()
+        # OpenCV 4.7 moved detection onto this object and it takes a *copy* of
+        # the parameters at construction, so mutating self.params afterwards
+        # has no effect. Rebuild the detector if the refinement method ever
+        # needs to change at runtime.
+        self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.params)
         self.zero_rotation: np.ndarray | None = None
 
     @staticmethod
     def _detector_params():
-        params = cv2.aruco.DetectorParameters_create()
+        params = cv2.aruco.DetectorParameters()
         # Re-measured on the installed four-tag board: CONTOUR reduced median
         # reprojection error from 2.38 to 1.84 px and static angle noise from
         # 0.09/0.07 to 0.016/0.006 deg at the same detection rate and runtime.
@@ -196,8 +202,7 @@ class BoardPoseEstimator:
     # ---- main -------------------------------------------------------------
     def detect(self, gray: np.ndarray):
         """Return {tag_id: (4,2) corners} for known ids only."""
-        corners, ids, _ = cv2.aruco.detectMarkers(
-            gray, self.dictionary, parameters=self.params)
+        corners, ids, _ = self.detector.detectMarkers(gray)
         found: dict[int, np.ndarray] = {}
         if ids is None:
             return found

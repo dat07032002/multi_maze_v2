@@ -140,7 +140,7 @@ def render_board(estimator, geometry, alpha, beta, distance_m=0.32):
         pts = projected.reshape(-1, 2)
 
         # Warp the tag bitmap onto its projected quad.
-        marker = cv2.aruco.drawMarker(estimator.dictionary, tag_id, 80)
+        marker = cv2.aruco.generateImageMarker(estimator.dictionary, tag_id, 80)
         source = np.array([[0, 0], [79, 0], [79, 79], [0, 79]], np.float32)
         # marker row 0 is the tag top -> matches corner order TL,TR,BR,BL
         homography = cv2.getPerspectiveTransform(source, pts.astype(np.float32))

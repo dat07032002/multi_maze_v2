@@ -31,7 +31,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 
 GRID = 3
-DICT = cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
+DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
 
 class Capture(Node):
@@ -39,8 +39,9 @@ class Capture(Node):
         super().__init__("aprilgrid_capture")
         self.args = args
         self.bridge = CvBridge()
-        self.params = cv2.aruco.DetectorParameters_create()
+        self.params = cv2.aruco.DetectorParameters()
         self.params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_APRILTAG
+        self.detector = cv2.aruco.ArucoDetector(DICT, self.params)
         self.coverage = np.zeros((GRID, GRID), dtype=int)
         self.views: list[tuple[np.ndarray, np.ndarray]] = []
         self.poses: list[np.ndarray] = []
@@ -105,8 +106,7 @@ class Capture(Node):
             self.shape = gray.shape
         self.seen += 1
 
-        corners, ids, _ = cv2.aruco.detectMarkers(
-            gray, DICT, parameters=self.params)
+        corners, ids, _ = self.detector.detectMarkers(gray)
         accepted = False
         n_tags = 0
         if ids is not None and len(ids):

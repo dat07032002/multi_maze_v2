@@ -32,7 +32,7 @@ from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
-DICT = cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
+DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
 
 class Check(Node):
@@ -40,8 +40,9 @@ class Check(Node):
         super().__init__("calibration_check")
         self.args = args
         self.bridge = CvBridge()
-        self.params = cv2.aruco.DetectorParameters_create()
+        self.params = cv2.aruco.DetectorParameters()
         self.params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_APRILTAG
+        self.detector = cv2.aruco.ArucoDetector(DICT, self.params)
         self.window_ok = not args.no_window
 
         kb = calib.get("kannala_brandt")
@@ -81,8 +82,7 @@ class Check(Node):
         frame = self.bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         height, width = gray.shape
-        corners, ids, _ = cv2.aruco.detectMarkers(
-            gray, DICT, parameters=self.params)
+        corners, ids, _ = self.detector.detectMarkers(gray)
 
         line = "no board"
         if ids is not None and len(ids):

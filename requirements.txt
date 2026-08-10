@@ -1,7 +1,14 @@
 # OpenCV must include the aruco module (the contrib distribution does).
+# 4.7 is the floor, not a preference: it is where Dictionary_get and
+# DetectorParameters_create were removed and detection moved onto
+# cv2.aruco.ArucoDetector, which is the API this code now uses.
 numpy>=1.21,<2
-opencv-contrib-python>=4.5,<4.12
+opencv-contrib-python>=4.7
 pytest>=6
+mujoco>=3.0
+gymnasium>=0.29
+stable-baselines3>=2.3
+tensorboard>=2.15
 
 # FEETECH STS3215 bus servos speak a serial protocol; no vendor SDK is used.
 pyserial>=3.5

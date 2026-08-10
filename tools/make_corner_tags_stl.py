@@ -89,7 +89,7 @@ def main():
     args = parser.parse_args()
 
     dict_id, cells = FAMILIES[args.family]
-    DICT = cv2.aruco.Dictionary_get(dict_id)
+    DICT = cv2.aruco.getPredefinedDictionary(dict_id)
     cell = args.tag_size / cells
     quiet = args.quiet_cells * cell
     plate = args.tag_size + 2 * quiet
@@ -115,7 +115,7 @@ def main():
         ):
             white.extend(box(ox + x_lo, y_lo, z0, ox + x_hi, y_hi, z1))
         # The tag itself.
-        bitmap = cv2.aruco.drawMarker(DICT, tag_id, cells)
+        bitmap = cv2.aruco.generateImageMarker(DICT, tag_id, cells)
         is_black = bitmap < 128
         for target, mask in ((black, is_black), (white, ~is_black)):
             for r, c0, c1 in runs(mask):

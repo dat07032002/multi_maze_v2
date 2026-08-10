@@ -27,7 +27,7 @@ import struct
 import cv2
 import numpy as np
 
-DICT = cv2.aruco.Dictionary_get(cv2.aruco.DICT_APRILTAG_36h11)
+DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 CELLS = 8  # tag36h11: 6x6 payload plus a one-cell black border
 
 
@@ -112,7 +112,7 @@ def main():
     for row in range(args.rows):
         for col in range(args.cols):
             tag_id = row * args.cols + col          # id 0 bottom-left
-            bitmap = cv2.aruco.drawMarker(DICT, tag_id, CELLS)
+            bitmap = cv2.aruco.generateImageMarker(DICT, tag_id, CELLS)
             is_black = bitmap < 128
             ox = args.margin + col * pitch
             oy = args.margin + row * pitch

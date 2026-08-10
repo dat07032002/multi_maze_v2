@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "_policy": {
+    "statuses": ["measured", "derived", "design", "assumed"],
+    "rule": "measured = read off the physical rig. derived = computed from measured values. design = chosen by us or set by the printer. assumed = a guess with a range, and MUST be randomized until M5 measures it.",
+    "why": "calib/*.json carries the same discipline. It is what stops an assumed friction number being quoted back later as if it had been measured."
+  },
+
+  "board.width": {"value": 0.256, "unit": "m", "status": "design", "source": "maze_design/maze_256x226.json"},
+  "board.height": {"value": 0.226, "unit": "m", "status": "design", "source": "maze_design/maze_256x226.json"},
+
+  "ball.radius": {
+    "value": 0.0055, "unit": "m", "status": "measured",
+    "source": "README and docs/PROJECT_STATUS.md; the detector and the z=5.5mm ray/plane intersection both depend on it",
+    "note": "maze_256x226.json says ball_radius 0.006. That is DESIGN MARGIN for corridor planning, not the marble. Do not use it for physics."
+  },
+  "ball.density": {
+    "value": 7850, "unit": "kg/m^3", "status": "assumed", "range": [7000, 8100],
+    "source": "steel, chosen 2026-08-06 after a reported 30 g proved impossible",
+    "note": "30 g at r=5.5mm implies 43000 kg/m^3, about twice osmium. Consequence of the choice is small: a=(5/7)g sin(theta) is mass-independent, so density only shifts contact stiffness and wall-impact feel."
+  },
+  "ball.mass": {"value": 0.005470, "unit": "kg", "status": "derived", "source": "(4/3)*pi*0.0055^3 * 7850"},
+
+  "maze.wall_thickness": {"value": 0.003, "unit": "m", "status": "design", "source": "maze_256x226.json"},
+  "maze.wall_height": {"value": 0.008, "unit": "m", "status": "design", "source": "maze_256x226.json, above the playing surface"},
+  "maze.floor_thickness": {"value": 0.003, "unit": "m", "status": "design", "source": "maze_256x226.json; total print height 11mm"},
+  "maze.hole_radius": {"value": 0.0075, "unit": "m", "status": "design", "source": "maze_256x226.json, all 15 holes"},
+  "maze.pad_top_height": {"value": 0.008, "unit": "m", "status": "design", "source": "tag_pads top_height_mm 11.0 minus the 3mm floor"},
+
+  "frame.height": {
+    "value": 0.012, "unit": "m", "status": "assumed", "range": [0.008, 0.030],
+    "source": "border_walls_printed is false and the layout comment says the physical picture frame contains the ball; its height was never measured",
+    "note": "Only needs to be tall enough that the ball cannot escape. Not safety-critical, but it is a guess."
+  },
+
+  "ball.floor_sliding_friction": {
+    "value": 0.4, "unit": "1", "status": "assumed", "range": [0.25, 0.60],
+    "source": "steel marble on untreated FDM PLA prior; fitted at M5",
+    "note": "Dry steel on printed PLA is ~0.3-0.5, so 0.4 is a fair nominal. Range narrowed from [0.15, 0.7] on 2026-08-08: 0.15 is PTFE territory, unreachable with a steel ball on PLA. The earlier note claimed LOW consequence because pure rolling only needs mu >= 0.042 -- true for steady rolling on an incline, but it omits WALL IMPACTS, where tangential friction governs the spin/translation exchange. This is CONSEQUENTIAL, not low: the physics_sensitivity sweep scores the low end at 0% success (even the re-centred 0.25 low, which IS reachable on PLA -- so it is a real failure mode, not a phantom). The policy must be trained to tolerate it."
+  },
+  "ball.rolling_friction_length": {
+    "value": 0.00004, "unit": "m", "status": "assumed", "range": [0.00004, 0.0002],
+    "source": "Crr ~0.0073 times the 0.0055 m radius, a printed-PLA prior; fitted at M5 from a coast-down",
+    "note": "DOMINANT unmeasured parameter. Sets coast-down and terminal speed. MuJoCo needs condim=6 for this to have any effect at all. Re-centred 2026-08-08 for an untreated FDM PLA board: the old nominal 2.2e-05 assumed Crr~0.004 (a machined/glass surface), too smooth for extruded PLA. 4e-05 (Crr~0.0073) is the HIGHEST friction at which the linear-damping analytic model still tracks the sim within the predictor's 0.5mm envelope (re-fit ball.linear_damping 0.38 -> 0.442mm; 5e-05 needed 0.48 and gave 0.610mm, out of spec). MuJoCo rolling friction is a roughly constant force while linear_damping is velocity-proportional, so the model degrades as friction rises. Analytic baseline solves in ~66s here vs 53s at the old nominal. Range low end raised from 3e-06 (polished steel-on-steel, impossible on PLA); high end 2e-04 stays as the rough-top-layer bound. M5 coast-down must re-fit rolling_friction AND linear_damping together -- they represent the same real deceleration on the sim and model sides respectively."
+  },
+  "ball.linear_damping": {
+    "value": 0.28, "unit": "1/s", "status": "derived", "range": [0.15, 0.45],
+    "source": "Re-derived 2026-08-08 jointly with ball.rolling_coulomb by minimising analytic-vs-MuJoCo 240ms per-angle-max prediction error at ball.rolling_friction_length 4e-05: minimum 0.353mm at damping 0.28, coulomb 0.02. Supersedes the M2 value 0.2018 (fit against the old 2.2e-05 friction; gave 1.08mm once friction was re-centred).",
+    "note": "The velocity-PROPORTIONAL half of the analytic model's coast-down; ball.rolling_coulomb is the constant-force half. Both are MODEL-side twins of the SIM-side ball.rolling_friction_length, so a change to friction forces a joint re-fit. Velocity-proportional damping alone could not track the sim below 0.586mm at 4e-05 -- the constant Coulomb term is what brings it into the predictor's 0.5mm envelope. DERIVED FROM THE SIM, NOT THE RIG: M5 re-fits all three together from a real coast-down."
+  },
+  "ball.rolling_coulomb": {
+    "value": 0.02, "unit": "m/s^2", "status": "derived", "range": [0.0, 0.10],
+    "source": "M2-style joint fit 2026-08-08 (see ball.linear_damping). Constant deceleration opposing motion.",
+    "note": "The constant-force half of rolling resistance, the physically correct companion to linear_damping: MuJoCo's condim=6 rolling friction is roughly velocity-INDEPENDENT, so a pure damping term mismatches worst at mid tilt. Consumed by sim.analytic_model (predictor) and control.mpc_teacher. The estimator omits it deliberately -- its process_accel_std 0.08 exists to cover exactly this class of unmodelled acceleration, and its decoupled 1-D axes do not take a 2-D-direction force cleanly. DERIVED FROM THE SIM: M5 re-fits from a real coast-down."
+  },
+  "ball.torsional_friction_length": {
+    "value": 0.00025, "unit": "m", "status": "assumed", "range": [0.00003, 0.0015],
+    "source": "untreated FDM PLA 6D-contact prior; pending a spin-decay fit"
+  },
+  "ball.wall_restitution": {
+    "value": 0.35, "unit": "1", "status": "assumed", "range": [0.05, 0.7],
+    "source": "low-speed steel-on-PLA prior; fitted at M5 from a controlled wall impact",
+    "note": "DOMINANT unmeasured parameter. Decides whether a bounce crosses a 20 mm corridor. NOT directly settable: MuJoCo takes a solref damping ratio, not a restitution coefficient, so this is a TARGET realised through sim.wall_dampratio. Use sim.measure_restitution to read back what the model actually does, and fit the damping ratio to the real bounce at M5."
+  },
+  "sim.wall_dampratio": {
+    "value": 0.35, "unit": "1", "status": "design",
+    "source": "M0: the solref damping ratio on the wall and frame classes, which is what MuJoCo actually consumes. Lower is bouncier.",
+    "note": "The knob M5 turns to hit ball.wall_restitution. Restitution is an emergent property of the contact solver here and has to be measured, not declared."
+  },
+
+  "actuator.roll.counts_per_rad": {"value": 11776.015622520805, "unit": "count/rad", "status": "measured", "source": "calib/servo_calibration.json, 2026-08-06"},
+  "actuator.pitch.counts_per_rad": {"value": 11411.740856067181, "unit": "count/rad", "status": "measured", "source": "calib/servo_calibration.json, 2026-08-06"},
+  "actuator.roll.step_latency": {"value": 0.18493960251726094, "unit": "s", "status": "measured", "source": "calib/servo_calibration.json"},
+  "actuator.pitch.step_latency": {"value": 0.15030739655412617, "unit": "s", "status": "measured", "source": "calib/servo_calibration.json"},
+  "actuator.roll.rise_time": {"value": 0.2560849189758301, "unit": "s", "status": "measured", "source": "calib/servo_calibration.json, 10-90 percent"},
+  "actuator.pitch.rise_time": {"value": 0.22958087921142578, "unit": "s", "status": "measured", "source": "calib/servo_calibration.json, 10-90 percent"},
+  "actuator.roll.max_rate": {
+    "value": 0.12063788738196578, "unit": "rad/s", "status": "measured",
+    "source": "calib/servo_calibration.json (6.91 deg/s): max() of the sample-to-sample rate over the step-response runs",
+    "note": "A FLOOR on capability, not a ceiling. It says the plate was seen to reach 6.91 deg/s, not that it cannot exceed it. It is also biased high: max() of a differentiated 200 Hz signal picks up noise, and 0.006 deg over a 5 ms sample is already +-1.2 deg/s. It sits 38% above what a first-order lag with the fitted tau predicts for the largest step tested."
+  },
+  "actuator.pitch.max_rate": {
+    "value": 0.1430373149468565, "unit": "rad/s", "status": "measured",
+    "source": "calib/servo_calibration.json (8.20 deg/s), same derivation as roll",
+    "note": "Same caveats. Sits 42% above the first-order prediction at the largest step tested."
+  },
+  "actuator.slew_limit_scale": {
+    "value": 1.0, "unit": "1", "status": "assumed", "range": [1.0, 5.0],
+    "source": "M1: multiplies max_rate to give the model's actual slew ceiling.",
+    "note": "THE ONE CONSEQUENTIAL UNKNOWN LEFT IN THE ACTUATOR. sysid only ever commanded unramped steps of 40/80/120 counts (0.195-0.584 deg), where the rate limit is invisible -- it changes the response by 0 ms. A policy commands up to 8 deg swings, where it is worth 275 ms on a 4 deg step, comparable to the entire dead time. 1.0 clamps at the observed rate, which is the conservative end because the observation is a floor; 5.0 is effectively unclamped, since first-order alone wants 34 deg/s for a 4 deg step. Randomise this at M4 until a large-amplitude step is measured: tools/sysid_actuator.py --step-counts 40 80 120 400 800."
+  },
+
+  "actuator.backlash_operational": {
+    "value": 0.0235619, "unit": "rad", "status": "measured", "range": [0.0139626, 0.0279253],
+    "source": "docs/PROJECT_STATUS.md: 1.06 deg mean / 1.42 deg max roll, 0.94 / 1.54 pitch, unconditioned",
+    "note": "THE VALUE THE SIMULATOR MUST USE (1.35 deg). servo_calibration.json's backlash_rad fields are 0.031/0.140 deg -- the CONDITIONED figures, describing what the mechanism does when every approach comes from one side. Using those would make the simulated roll axis about forty times more precise than the hardware."
+  },
+  "actuator.backlash_conditioned": {
+    "value": [0.0005457120255695953, 0.0024456645924178398], "unit": "rad", "status": "measured",
+    "source": "calib/servo_calibration.json roll/pitch",
+    "note": "Recorded for completeness only. Not for use. See actuator.backlash_operational."
+  },
+  "actuator.centre_bias": {
+    "value": [0.0048869, -0.0033161], "unit": "rad", "status": "measured",
+    "source": "docs/PROJECT_STATUS.md: residual centre bias after compensation, +0.28 deg roll and -0.19 deg pitch, from tools/validate_backlash.py",
+    "note": "A constant offset between the fitted calibration centre and true level, so compensation cannot remove it -- it is not a reversal effect. This is what makes the compensated mean |error| 0.26 deg rather than 0. Same phenomenon as actuator.level_repeatability, and the knob M5 randomises."
+  },
+  "actuator.command_quantum": {"value": 40, "unit": "count", "status": "measured", "source": "commands under 20 counts do not reliably keep their sign; 40 counts (~0.19 deg) is the practical floor"},
+  "actuator.max_tilt": {"value": 0.0698132, "unit": "rad", "status": "design", "source": "4.0 deg, the commandable limit in calib/servo_calibration.json max_tilt_rad"},
+  "actuator.safe_travel_roll": {"value": [-0.1221730, 0.1221730], "unit": "rad", "status": "measured", "source": "calib/servo_travel_limits.json, +-7.00 deg about level after renumbering"},
+  "actuator.safe_travel_pitch": {"value": [-0.1459175, 0.1459175], "unit": "rad", "status": "measured", "source": "calib/servo_travel_limits.json, +-8.36 deg about level"},
+  "actuator.level_repeatability": {
+    "value": 0.0069813, "unit": "rad", "status": "measured",
+    "source": "0.4 deg; the fitted centre moved 85 counts between two consecutive sweeps with no mechanical change",
+    "note": "A per-episode BIAS to randomize, not per-step noise."
+  },
+
+  "camera.latency": {
+    "value": 0.060, "unit": "s", "status": "assumed", "range": [0.030, 0.120],
+    "source": "Camera is an e-con Systems See3CAM_24CUG (onsemi AR0234, global shutter, USB 3.1, UVC, uncompressed UYVY + MJPEG, 120fps HD / 60fps FHD). Still NOT MEASURED end to end; no camera timestamping exists in this repo yet.",
+    "note": "Adds directly to the 185 ms actuator dead time. With this camera the budget is ~30 ms at 720p120 and ~50-60 ms typical (global shutter, no MJPEG decode on UYVY, 1-2 frame UVC buffer), so 0.06 nominal and the [0.03, 0.12] range hold up. TWO CONFIG CHOICES MOVE THIS MORE THAN THE HARDWARE: prefer UYVY over MJPEG (removes decode), and fix exposure manually -- the onboard ISP defaults to auto exposure, which makes latency vary with lighting, and control/predictor.py corrects with a single constant. Measured at M5 by cross-correlating camera alpha against IMU alpha on one host clock."
+  },
+  "camera.position_noise": {"value": 0.001, "unit": "m", "status": "assumed", "range": [0.0005, 0.003], "source": "not measured on labelled data; the 98% figure in PROJECT_STATUS is a replay recovery rate"},
+  "camera.dropout_rate": {"value": 0.02, "unit": "1", "status": "assumed", "range": [0.0, 0.08], "source": "not measured"},
+
+  "sim.timestep": {"value": 0.001, "unit": "s", "status": "design", "source": "convergence-checked at M0 against 0.5 and 2 ms"},
+  "sim.control_rate": {"value": 20.0, "unit": "Hz", "status": "design", "source": "camera runs 10-30 Hz; randomized 40-70 ms period during training"},
+  "sim.solref": {"value": [0.004, 1.0], "unit": "s,1", "status": "design", "source": "tuned at M0 so contact penetration stays under 0.1 mm; must remain >= 2x timestep"},
+  "sim.solimp": {"value": [0.95, 0.99, 0.001], "unit": "1", "status": "design", "source": "M0"},
+  "sim.floor_rim_step": {
+    "value": 0.0005, "unit": "m", "status": "design",
+    "source": "M0: hole rims are cut by subtracting x-intervals from y-bands of the floor. Band edges are placed at equal steps in half-width, not uniformly in y, so this value bounds the radial deviation from a true circle directly.",
+    "note": "Uniform strips are the wrong tool: measured on this layout, 2 mm -> 0.25 mm strips cost 6.8x the boxes and cut the worst rim step only from 4.50 mm to 1.92 mm."
+  }
+}

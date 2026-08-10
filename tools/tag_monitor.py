@@ -37,9 +37,10 @@ class Monitor(Node):
         super().__init__("tag_monitor")
         self.args = args
         self.bridge = CvBridge()
-        self.dict = cv2.aruco.Dictionary_get(FAMILIES[args.family])
-        self.params = cv2.aruco.DetectorParameters_create()
+        self.dict = cv2.aruco.getPredefinedDictionary(FAMILIES[args.family])
+        self.params = cv2.aruco.DetectorParameters()
         self.params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_APRILTAG
+        self.detector = cv2.aruco.ArucoDetector(self.dict, self.params)
         self.frames = 0
         self.hits = defaultdict(int)
         self.size = defaultdict(list)
@@ -53,8 +54,7 @@ class Monitor(Node):
         height, width = gray.shape
         self.frames += 1
 
-        corners, ids, _ = cv2.aruco.detectMarkers(
-            gray, self.dict, parameters=self.params)
+        corners, ids, _ = self.detector.detectMarkers(gray)
         if ids is not None and len(ids):
             for tag_id, corner in zip(ids.ravel(), corners):
                 pts = corner[0]
